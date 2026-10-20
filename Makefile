@@ -14,7 +14,7 @@ EXTRA_CXXFLAGS ?=
 
 CPPFLAGS := -Iinclude -MMD -MP
 CXXFLAGS := -std=c++23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -g $(EXTRA_CXXFLAGS)
-TEST_LIBS := -lgtest_main -lgtest -pthread
+TEST_LIBS := -lgtest -pthread
 
 # Command prefix used to launch the test binary (set by the tsan target).
 TEST_RUNNER ?=

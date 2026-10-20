@@ -32,16 +32,16 @@ namespace mw {
 struct ResourceRecord {
   std::string name;
   RecordType type;
-  uint16_t dns_class=1;
-  uint16_t ttl = 0;
+  uint16_t rclass = 1;
+  uint32_t ttl = 0;
   std::vector<std::byte> rdata;
 
   bool operator==(const ResourceRecord&) const = default;
 };
 // need to write Resolve result
 struct ResolveResult {
-  Rcode rcode;
-  std::vector<ResourceRecord> records;
+  Rcode rcode = Rcode::NoError;
+  std::vector<ResourceRecord> answers;
   std::vector<ResourceRecord> authority;
   static ResolveResult error(Rcode rc = Rcode::NoError) {
     return ResolveResult{rc, {}, {}};

@@ -17,13 +17,14 @@ namespace types {
         DomainName() = default;
 
         DomainName(const std::vector<uint8_t>& msg, std::size_t pos = 0, std::size_t* next = nullptr) {
+            std::size_t size    = 0;
             std::size_t end_pos = 0;
             bool jumped         = false;
             std::size_t jumps   = 0;
 
             while (true) {
                 if (pos >= msg.size()) throw std::runtime_error("DomainName: read past end of message");
-                uint8_t len = msg[pos++];
+                uint8_t len = msg[pos];
 
                 if (len == 0) {
                     if (!jumped) end_pos = pos + 1;
@@ -42,11 +43,13 @@ namespace types {
 
                 if ((len & 0xC0) != 0x00) throw std::runtime_error("DomainName: reserved label type");
 
-                if (pos + len + 1 > 255) throw std::runtime_error("DomainName: name too long");
+                if ((size + len) > 254) throw std::runtime_error("DomainName: name too long");
+                if ((pos + len + 1) > msg.size()) throw std::runtime_error("DomainName: read past end of message");
 
-                labels.emplace_back(reinterpret_cast<const char*>(&msg[pos]), len);
+                labels.emplace_back(reinterpret_cast<const char*>(&msg[pos + 1]), len);
 
-                pos += len;
+                pos += len + 1;
+                size += len + 1;
             }
             if (next) *next = end_pos;
         }

@@ -1,12 +1,5 @@
 # dns-middleware: GNU Make build.
 
-# Make predefines CXX (as "g++"), so a plain `CXX ?= g++-14` would never take effect.
-# This has the same intent: use g++-14 unless CXX is set in the environment or on the
-# command line (e.g. `make CXX=clang++`).
-ifeq ($(origin CXX),default)
-  CXX := g++-14
-endif
-
 CLANG_FORMAT ?= clang-format
 
 BUILD_DIR      ?= build

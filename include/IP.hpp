@@ -1,7 +1,13 @@
 #ifndef TYPES_IP_HPP
 #define TYPES_IP_HPP
 
+
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+#else
 #include <arpa/inet.h>
+#endif
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -78,9 +84,9 @@ namespace types {
         std::string to_string() const noexcept {
             char repr[40];
             if (ipv6)
-                inet_ntop(AF_INET6, &addr[0], repr, 40);
+                inet_ntop(AF_INET6, &addr[0], repr, sizeof(repr));
             else
-                inet_ntop(AF_INET, &addr[0], repr, 40);
+                inet_ntop(AF_INET, &addr[0], repr, sizeof(repr));
             return std::string(repr);
         }
 

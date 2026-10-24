@@ -11,6 +11,8 @@
 
 #include "DomainName.hpp"
 
+#undef IN
+
 namespace types {
     enum class RecordType : uint16_t {
         A          = 1,     // IPv4 address

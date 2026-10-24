@@ -15,7 +15,7 @@ namespace backend {
         Resolver* fallback;
 
     public:
-        HostsFileResolver(std::string hosts_file, Resolver* fallback) : fallback(fallback) {
+        HostsFileResolver(const std::string& hosts_file, Resolver* fallback) : fallback(fallback) {
             std::ifstream file(hosts_file);
             while (!file.eof()) {
                 std::string line;
@@ -34,6 +34,7 @@ namespace backend {
                 while (!line_stream.eof()) {
                     std::string name;
                     line_stream >> name;
+                    if (name.size() == 0) continue;
                     types::DomainName domain_name;
                     try {
                         domain_name = types::DomainName(name);
@@ -53,22 +54,24 @@ namespace backend {
 
         HostsFileResolver(const char* hosts_file, Resolver* fallback) : HostsFileResolver(std::string(hosts_file), fallback) {}
 
-        types::ResolveResult resolve(types::DomainName name, types::RecordType type) {
+        types::ResolveResult resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass) {
             std::vector<types::ResourceRecord> answers;
-            if ((type == types::RecordType::A) || (type == types::RecordType::ANY)) {
-                for (const types::ResourceRecord& record : records)
-                    if (record.name == name && record.type == types::RecordType::A) answers.push_back(record);
-            }
-            if ((type == types::RecordType::AAAA) || (type == types::RecordType::ANY)) {
-                for (const types::ResourceRecord& record : records)
-                    if (record.name == name && record.type == types::RecordType::AAAA) answers.push_back(record);
-            }
-            if (type == types::RecordType::PTR) {
-                for (const types::ResourceRecord& record : records)
-                    if (record.name == name && record.type == types::RecordType::PTR) answers.push_back(record);
+            if (rclass == types::RecordClass::IN) {
+                if ((type == types::RecordType::A) || (type == types::RecordType::ANY)) {
+                    for (const types::ResourceRecord& record : records)
+                        if (record.name == name && record.type == types::RecordType::A) answers.push_back(record);
+                }
+                if ((type == types::RecordType::AAAA) || (type == types::RecordType::ANY)) {
+                    for (const types::ResourceRecord& record : records)
+                        if (record.name == name && record.type == types::RecordType::AAAA) answers.push_back(record);
+                }
+                if (type == types::RecordType::PTR) {
+                    for (const types::ResourceRecord& record : records)
+                        if (record.name == name && record.type == types::RecordType::PTR) answers.push_back(record);
+                }
             }
             if (answers.size()) return types::ResolveResult{ .answer = answers };
-            if (fallback) return fallback->resolve(name, type);
+            if (fallback) return fallback->resolve(name, type, rclass);
             return types::ResolveResult{ .rcode = types::Rcode::NXDomain };
         }
     };

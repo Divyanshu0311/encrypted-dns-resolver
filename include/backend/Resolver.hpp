@@ -7,7 +7,7 @@
 namespace backend {
     class Resolver : utils::immovable {
     public:
-        virtual types::ResolveResult resolve(types::DomainName name, types::RecordType type) = 0;
+        virtual types::ResolveResult resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass) = 0;
     };
 
 } // namespace backend

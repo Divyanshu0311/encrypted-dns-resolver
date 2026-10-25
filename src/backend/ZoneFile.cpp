@@ -123,9 +123,16 @@ namespace backend {
         return name.absolute ? name : name + origin;
     }
 
-
+    static types::DomainName parse_absolute_origin(const std::string& tok, const char* directive) {
+        types::DomainName name(tok);
+        if (!name.absolute)
+            throw std::runtime_error(std::string("ZoneFile: ") + directive + " requires an absolute domain name (with trailing dot), got '" + tok + "'");
+        return name;
+    }
 
     std::vector<types::ResourceRecord> records_from_zone_file(types::DomainName origin, const std::string& zone_file) {
+        if (!origin.absolute) throw std::runtime_error("ZoneFile: origin must be an absolute domain name");
+
         std::vector<types::ResourceRecord> records;
         std::optional<uint32_t> default_ttl, last_ttl;
         std::optional<types::DomainName> last_owner;
@@ -142,7 +149,7 @@ namespace backend {
             if (tok[0][0] == '$') {
                 std::string directive = utils::upper(tok[0]);
                 if (directive == "$ORIGIN" && tok.size() == 2)
-                    origin = resolve_name(tok[1], origin);
+                    origin = parse_absolute_origin(tok[1], "$ORIGIN");
                 else if (directive == "$TTL" && tok.size() == 2)
                     default_ttl = parse_ttl(tok[1]);
                 else if (directive == "$INCLUDE" && (tok.size() == 2 || tok.size() == 3)) {
@@ -157,7 +164,7 @@ namespace backend {
                     types::DomainName saved_origin  = origin;
                     std::string saved_file          = cur_file;
                     std::filesystem::path saved_dir = cur_dir;
-                    if (tok.size() == 3) origin = resolve_name(tok[2], origin);
+                    if (tok.size() == 3) origin = parse_absolute_origin(tok[2], "$INCLUDE");
                     cur_file = p.string();
                     cur_dir  = p.parent_path();
                     ++include_depth;

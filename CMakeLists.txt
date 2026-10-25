@@ -10,14 +10,30 @@ option(BUILD_TESTING "Build the unit tests" ON)
 
 find_package(Threads REQUIRED)
 
-# All sources under src/ (CONFIGURE_DEPENDS re-checks the glob on each build)
-file(GLOB_RECURSE DNS_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
-)
-
 # Everything except main.cpp, so the tests can reuse it without a second main()
-set(DNS_LIB_SOURCES ${DNS_SOURCES})
-list(FILTER DNS_LIB_SOURCES EXCLUDE REGEX "/main\\.cpp$")
+set(DNS_LIB_SOURCES
+    src/backend/Cache.cpp
+    src/backend/ForwardingResolver.cpp
+    src/backend/HostsFileResolver.cpp
+    src/backend/RecursiveResolver.cpp
+    src/backend/ZoneFile.cpp
+    src/backend/ZoneFilesResolver.cpp
+    src/config.cpp
+    src/deadline_timer.cpp
+    src/dns_message.cpp
+    src/DomainName.cpp
+    src/dot_framer.cpp
+    src/inflight_table.cpp
+    src/IP.cpp
+    src/load_balancer.cpp
+    src/logger.cpp
+    src/metrics.cpp
+    src/middleware.cpp
+    src/rate_limiter.cpp
+    src/Records.cpp
+    src/responder.cpp
+    src/worker.cpp
+)
 
 # Compiled once, linked into both the server and the tests (no archive/library produced)
 add_library(dns_objs OBJECT ${DNS_LIB_SOURCES})
@@ -59,12 +75,31 @@ if(BUILD_TESTING)
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 
-    file(GLOB_RECURSE DNS_TEST_SOURCES CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
+    add_executable(dns_tests
+        tests/main.cpp
+        tests/test_bounded_queue.cpp
+        tests/test_config.cpp
+        tests/test_deadline_timer.cpp
+        tests/test_dns_message.cpp
+        tests/test_domainname.cpp
+        tests/test_dot_framer.cpp
+        tests/test_hostsfileresolver.cpp
+        tests/test_inflight_table.cpp
+        tests/test_IP.cpp
+        tests/test_load_balancer.cpp
+        tests/test_middleware.cpp
+        tests/test_rate_limiter.cpp
+        tests/test_records.cpp
+        tests/test_responder.cpp
+        tests/test_types.cpp
+        tests/test_worker.cpp
+        tests/test_zonefile.cpp
+        tests/test_zonefilesresolver.cpp
     )
-
-    add_executable(dns_tests ${DNS_TEST_SOURCES})
-    target_link_libraries(dns_tests PRIVATE dns_objs GTest::gtest_main)
+    # tests/ on the include path so "support/*.hpp" resolve
+    target_include_directories(dns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    # Plain gtest, not gtest_main: tests/main.cpp provides main()
+    target_link_libraries(dns_tests PRIVATE dns_objs GTest::gtest)
 
     include(GoogleTest)
     gtest_discover_tests(dns_tests)

@@ -17,8 +17,6 @@ namespace backend {
     public:
         HostsFileResolver(const std::string& hosts_file, Resolver* fallback);
 
-        HostsFileResolver(const char* hosts_file, Resolver* fallback);
-
         types::ResolveResult resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass,
                                      const bool recurse = true) override;
     };

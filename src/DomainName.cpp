@@ -162,7 +162,7 @@ namespace types {
                                       [](const std::string& lhs, const std::string& rhs) { return utils::lower(lhs) == utils::lower(rhs); });
     }
 
-    DomainName DomainName::parent() const noexcept {
+    DomainName DomainName::parent() const {
         DomainName parent_name(*this);
         if (!parent_name.labels.empty()) parent_name.labels.erase(parent_name.labels.begin());
         return parent_name;

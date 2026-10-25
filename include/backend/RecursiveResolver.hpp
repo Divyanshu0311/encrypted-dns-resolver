@@ -1,11 +1,10 @@
 #ifndef BACKEND_RECURSIVERESOLVER_HPP
 #define BACKEND_RECURSIVERESOLVER_HPP
 
-#include <stdexcept>
-#include <vector>
-
-#include "IP.hpp"
-#include "Resolver.hpp"
+#include "DomainName.hpp"
+#include "Records.hpp"
+#include "backend/Cache.hpp"
+#include "backend/Resolver.hpp"
 
 namespace backend {
     class RecursiveResolver : public Resolver {
@@ -13,9 +12,10 @@ namespace backend {
         Cache& cache;
 
     public:
-        RecursiveResolver(Cache& cache) : cache(cache) {}
+        RecursiveResolver(Cache& cache);
 
-        types::ResolveResult resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass) {}
+        types::ResolveResult resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass,
+                                     const bool recurse = true) override;
     };
 } // namespace backend
 

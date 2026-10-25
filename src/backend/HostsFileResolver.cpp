@@ -8,9 +8,9 @@
 namespace backend {
     HostsFileResolver::HostsFileResolver(const std::string& hosts_file, Resolver* fallback) : fallback(fallback) {
         std::ifstream file(hosts_file);
-        while (!file.eof()) {
-            std::string line;
-            std::getline(file, line);
+        if (!file) throw std::runtime_error("HostsFileResolver: file does not exist");
+        std::string line;
+        while (std::getline(file, line)) {
             std::stringstream line_stream(line);
             std::string ip_str;
             line_stream >> ip_str;
@@ -42,8 +42,6 @@ namespace backend {
         }
         file.close();
     }
-
-    HostsFileResolver::HostsFileResolver(const char* hosts_file, Resolver* fallback) : HostsFileResolver(std::string(hosts_file), fallback) {}
 
     types::ResolveResult HostsFileResolver::resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass,
                                                     const bool recurse) {

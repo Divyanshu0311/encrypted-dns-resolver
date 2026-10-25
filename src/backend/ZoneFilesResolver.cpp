@@ -179,15 +179,20 @@ namespace backend {
             auto file_records = backend::records_from_zone_file(zone_file.origin, zone_file.path);
 
             std::vector<types::ResourceRecord> soa_records;
-            for (const types::ResourceRecord& record : file_records)
+            for (const auto& record : file_records)
                 if (record.type == types::RecordType::SOA) soa_records.push_back(record);
 
             if (soa_records.empty()) throw std::runtime_error("ZoneFilesResolver: " + zone_file.path + ": No SOA records");
             if (soa_records.size() != 1) throw std::runtime_error("ZoneFilesResolver: " + zone_file.path + ": Too many SOA records");
 
-            ZoneKey key{ soa_records[0].name, soa_records[0].rclass };
+            auto apex   = soa_records[0].name;
+            auto rclass = soa_records[0].rclass;
+            for (const auto& record : file_records)
+                if (record.rclass != rclass) throw std::runtime_error("ZoneFilesResolver: Multiple record classes");
+
+            ZoneKey key{ apex, rclass };
             if (records.find(key) != records.end())
-                throw std::runtime_error("ZoneFilesResolver: " + static_cast<std::string>(soa_records[0].name) + " defined multiple times in same class");
+                throw std::runtime_error("ZoneFilesResolver: " + static_cast<std::string>(apex) + " defined multiple times in same class");
             records[key] = file_records;
         }
     }

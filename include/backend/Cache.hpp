@@ -1,13 +1,16 @@
 #ifndef BACKEND_CACHE_HPP
 #define BACKEND_CACHE_HPP
 
+#include <cstdint>
 #include <ctime>
 #include <shared_mutex>
+#include <string>
 #include <vector>
 
 #include "Records.hpp"
+#include "utils.hpp"
 
-namespace Backend {
+namespace backend {
     struct CacheRecord {
         types::DomainName name;
         types::RecordType type;
@@ -16,7 +19,7 @@ namespace Backend {
         std::vector<uint8_t> rdata;
     };
 
-    class Cache {
+    class Cache : utils::immovable {
     private:
         std::vector<CacheRecord> records;
         mutable std::shared_mutex mutex;
@@ -24,20 +27,14 @@ namespace Backend {
     public:
         Cache() = default;
 
-        bool add_root_hints(const std::string& root_hints_file) {}
+        std::vector<types::ResourceRecord> find(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass);
 
-        bool add_root_hints(const char* root_hints_file) { return add_root_hints(std::string(root_hints_file)); }
+        bool update(const std::vector<types::ResourceRecord>& records);
 
-        std::vector<types::ResourceRecord> find(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass) {}
+        bool update(const types::ResolveResult& result);
 
-        bool update(const std::vector<types::ResourceRecord>& records) {}
-
-        bool update(const types::ResolveResult& result) {
-            update(result.answer);
-            update(result.authority);
-            update(result.additional);
-        }
+        bool add_root_hints(const std::string& root_hints_file);
     };
-} // namespace Backend
+} // namespace backend
 
 #endif

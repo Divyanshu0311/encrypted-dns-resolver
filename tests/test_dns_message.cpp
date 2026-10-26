@@ -370,15 +370,11 @@ DnsQuery example_query(bool has_edns = false, bool wants_padding = false) {
 }
 
 ResourceRecord a_record(std::string name = "example.com.") {
-  return ResourceRecord{std::move(name),
-                        RecordType::A,
-                        1,
-                        300,
-                        {std::byte{93}, std::byte{184}, std::byte{215}, std::byte{14}}};
+  return ResourceRecord{std::move(name), RecordType::A, mw::RecordClass::IN, 300, {93, 184, 215, 14}};
 }
 
 ResolveResult answer(std::vector<ResourceRecord> records) {
-  return ResolveResult{Rcode::NoError, std::move(records), {}};
+  return ResolveResult{Rcode::NoError, std::move(records), {}, {}};
 }
 
 } // namespace
@@ -408,15 +404,15 @@ TEST(DnsMessageEncode, CopiesRecursionDesiredAndSetsRecursionAvailable) {
 }
 
 TEST(DnsMessageEncode, PutsRcodeInFlags) {
-  const auto wire = mw::encode_response(example_query(), ResolveResult::error(Rcode::NXDomain));
+  const auto wire = mw::encode_response(example_query(), mw::error_result(Rcode::NXDomain));
   EXPECT_EQ(u16_at(wire, 2) & 0xF, 3);
   EXPECT_EQ(u16_at(wire, 4), 1);
   EXPECT_EQ(u16_at(wire, 6), 0);
 }
 
 TEST(DnsMessageEncode, CountsAuthorityRecords) {
-  const ResourceRecord soa{"com.", RecordType::SOA, 1, 900, {std::byte{0}}};
-  const auto wire = mw::encode_response(example_query(), ResolveResult{Rcode::NXDomain, {}, {soa}});
+  const ResourceRecord soa{std::string("com."), RecordType::SOA, mw::RecordClass::IN, 900, {0}};
+  const auto wire = mw::encode_response(example_query(), ResolveResult{Rcode::NXDomain, {}, {soa}, {}});
   EXPECT_EQ(u16_at(wire, 6), 0);
   EXPECT_EQ(u16_at(wire, 8), 1);
 }
@@ -461,11 +457,10 @@ TEST(DnsMessageEncode, PadsLargeRepliesToNextBlock) {
 TEST(DnsMessageEncode, FallsBackToServFailWhenRecordCannotBeEncoded) {
   const auto expected =
       Packet().header(0x8182, 1, 0, 0, 0).name("example.com").type_class(kTypeA, kClassIn);
-  for (const std::string &bad :
-       std::vector<std::string>{"a..com.", std::string(64, 'a') + ".com."}) {
-    EXPECT_EQ(mw::encode_response(example_query(), answer({a_record(bad)})), expected.bytes())
-        << bad;
-  }
+  // DomainName already rejects bad names, so make the record unencodable with oversized rdata
+  auto huge = a_record();
+  huge.rdata.assign(70000, 0);
+  EXPECT_EQ(mw::encode_response(example_query(), answer({huge})), expected.bytes());
 }
 
 TEST(DnsMessageEncode, EncodeErrorIsBareHeader) {

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "mw/resolver_interface.hpp"
+#include "mw/types.hpp"
 
 namespace mw {
 

@@ -96,7 +96,8 @@ namespace types {
         std::vector<uint8_t> result;
         for (const std::string& label : labels) {
             result.push_back(label.size());
-            result.append_range(label);
+            // insert() rather than append_range(): append_range needs GCC 15
+            result.insert(result.end(), label.begin(), label.end());
         }
         if (absolute) result.push_back(0);
 
@@ -145,24 +146,29 @@ namespace types {
         if (len > 254)
             throw std::runtime_error("DomainName: length overflow after addition");
         else
-            labels.append_range(name.labels);
+            // insert() rather than append_range(): append_range needs GCC 15
+            labels.insert(labels.end(), name.labels.begin(), name.labels.end());
         absolute = name.absolute;
         return *this;
     }
 
     bool DomainName::is_ancestor_of(const DomainName& name) const noexcept {
         if (absolute != name.absolute) return false;
-        return std::ranges::ends_with(name.labels, labels,
-                                      [](const std::string& lhs, const std::string& rhs) { return utils::lower(lhs) == utils::lower(rhs); });
+        // name ends with our labels (case-insensitive)
+        if (labels.size() > name.labels.size()) return false;
+        return std::equal(labels.begin(), labels.end(), name.labels.end() - labels.size(),
+                          [](const std::string& lhs, const std::string& rhs) { return utils::lower(lhs) == utils::lower(rhs); });
     }
 
     bool DomainName::is_descendent_of(const DomainName& name) const noexcept {
         if (absolute != name.absolute) return false;
-        return std::ranges::ends_with(labels, name.labels,
-                                      [](const std::string& lhs, const std::string& rhs) { return utils::lower(lhs) == utils::lower(rhs); });
+        // our labels end with name's labels (case-insensitive)
+        if (name.labels.size() > labels.size()) return false;
+        return std::equal(name.labels.begin(), name.labels.end(), labels.end() - name.labels.size(),
+                          [](const std::string& lhs, const std::string& rhs) { return utils::lower(lhs) == utils::lower(rhs); });
     }
 
-    DomainName DomainName::parent() const {
+    DomainName DomainName::parent() const noexcept {
         DomainName parent_name(*this);
         if (!parent_name.labels.empty()) parent_name.labels.erase(parent_name.labels.begin());
         return parent_name;

@@ -31,6 +31,7 @@ set(DNS_LIB_SOURCES
     src/middleware.cpp
     src/rate_limiter.cpp
     src/Records.cpp
+    src/resolver_factory.cpp
     src/responder.cpp
     src/worker.cpp
 )
@@ -57,6 +58,9 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(dns_server src/main.cpp)
 target_link_libraries(dns_server PRIVATE dns_objs)
+
+add_executable(load_gen tools/load_gen.cpp)
+target_link_libraries(load_gen PRIVATE dns_objs)
 
 # ---------------------------------------------------------------------------
 # Tests (GoogleTest)
@@ -87,9 +91,11 @@ if(BUILD_TESTING)
         tests/test_inflight_table.cpp
         tests/test_IP.cpp
         tests/test_load_balancer.cpp
+        tests/test_metrics.cpp
         tests/test_middleware.cpp
         tests/test_rate_limiter.cpp
         tests/test_records.cpp
+        tests/test_resolver_factory.cpp
         tests/test_responder.cpp
         tests/test_types.cpp
         tests/test_worker.cpp

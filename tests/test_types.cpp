@@ -1,4 +1,3 @@
-#include "mw/resolver_interface.hpp"
 #include "mw/types.hpp"
 
 #include "support/show.hpp"
@@ -14,8 +13,8 @@
 
 namespace {
 
-// Minimal IResolver subclass: records how it was called and whether it was destroyed.
-class RecordingResolver : public mw::IResolver {
+// Minimal backend::Resolver subclass: records how it was called and whether it was destroyed.
+class RecordingResolver : public backend::Resolver {
 public:
   explicit RecordingResolver(bool* destroyed = nullptr) : destroyed_(destroyed) {}
   ~RecordingResolver() override {
@@ -24,10 +23,11 @@ public:
     }
   }
 
-  mw::ResolveResult resolve(std::string_view name, mw::RecordType type) override {
+  types::ResolveResult resolve(const types::DomainName& name, const types::RecordType type,
+                               const types::RecordClass, const bool) override {
     last_name = std::string(name);
     last_type = type;
-    return mw::ResolveResult::error(mw::Rcode::NXDomain);
+    return mw::error_result(mw::Rcode::NXDomain);
   }
 
   std::string last_name;
@@ -41,161 +41,77 @@ std::uint16_t raw(mw::RecordType type) {
   return static_cast<std::uint16_t>(type);
 }
 
-int raw(mw::Rcode rcode) {
-  return static_cast<int>(rcode);
+mw::QueryKey key(const std::string& name, mw::RecordType type) {
+  return mw::QueryKey{mw::DomainName(name), type};
 }
 
 } // namespace
 
-// ---- resolver_interface.hpp: enums ----
+// ---- aliases onto Arnav's types ----
 
-TEST(RecordType, NamedValues) {
-  using RT = mw::RecordType;
-  static_assert(std::is_same_v<std::underlying_type_t<RT>, std::uint16_t>);
-  EXPECT_SHOW_EQ(raw(RT::A), 1);
-  EXPECT_SHOW_EQ(raw(RT::NS), 2);
-  EXPECT_SHOW_EQ(raw(RT::CNAME), 5);
-  EXPECT_SHOW_EQ(raw(RT::SOA), 6);
-  EXPECT_SHOW_EQ(raw(RT::PTR), 12);
-  EXPECT_SHOW_EQ(raw(RT::MX), 15);
-  EXPECT_SHOW_EQ(raw(RT::TXT), 16);
-  EXPECT_SHOW_EQ(raw(RT::AAAA), 28);
-  EXPECT_SHOW_EQ(raw(RT::ANY), 255);
+TEST(Aliases, AreArnavsTypes) {
+  static_assert(std::is_same_v<mw::RecordType, types::RecordType>);
+  static_assert(std::is_same_v<mw::Rcode, types::Rcode>);
+  static_assert(std::is_same_v<mw::ResolveResult, types::ResolveResult>);
+  static_assert(std::is_same_v<mw::DomainName, types::DomainName>);
+  SUCCEED();
 }
 
 TEST(RecordType, UnnamedValuesRoundTrip) {
-  EXPECT_SHOW_EQ(raw(static_cast<mw::RecordType>(65)), 65);   // HTTPS
-  EXPECT_SHOW_EQ(raw(static_cast<mw::RecordType>(257)), 257); // CAA
+  EXPECT_SHOW_EQ(raw(static_cast<mw::RecordType>(65)), 65);
+  EXPECT_SHOW_EQ(raw(static_cast<mw::RecordType>(257)), 257);
   EXPECT_SHOW_EQ(raw(static_cast<mw::RecordType>(65535)), 65535);
 }
 
-TEST(Rcode, NamedValues) {
-  using R = mw::Rcode;
-  static_assert(std::is_same_v<std::underlying_type_t<R>, std::uint8_t>);
-  EXPECT_SHOW_EQ(raw(R::NoError), 0);
-  EXPECT_SHOW_EQ(raw(R::FormErr), 1);
-  EXPECT_SHOW_EQ(raw(R::ServFail), 2);
-  EXPECT_SHOW_EQ(raw(R::NXDomain), 3);
-  EXPECT_SHOW_EQ(raw(R::NotImp), 4);
-  EXPECT_SHOW_EQ(raw(R::Refused), 5);
-}
+// ---- error_result ----
 
-// ---- resolver_interface.hpp: ResourceRecord / ResolveResult ----
-
-TEST(ResourceRecord, Defaults) {
-  mw::ResourceRecord rr{};
-  EXPECT_SHOW_EQ(rr.rclass, 1);
-  EXPECT_SHOW_EQ(rr.ttl, 0u);
-  EXPECT_SHOW_EQ(rr.name, "");
-  EXPECT_SHOW_EQ(rr.rdata.size(), 0u);
-}
-
-TEST(ResourceRecord, TtlIs32Bit) {
-  static_assert(std::is_same_v<decltype(mw::ResourceRecord::ttl), std::uint32_t>);
-  mw::ResourceRecord rr{};
-  rr.ttl = 86400u * 7; // one week does not fit in 16 bits
-  EXPECT_SHOW_EQ(rr.ttl, 604800u);
-}
-
-TEST(ResourceRecord, Equality) {
-  const mw::ResourceRecord original{
-      "example.com.", mw::RecordType::A, 1, 300,
-      {std::byte{93}, std::byte{184}, std::byte{216}, std::byte{34}}};
-  mw::ResourceRecord copy = original;
-  EXPECT_SHOW_EQ_AS("unchanged copy", copy, original);
-
-  copy.ttl = 301;
-  EXPECT_SHOW_NE_AS("copy with other ttl", copy, original);
-
-  copy = original;
-  copy.rdata.back() = std::byte{35};
-  EXPECT_SHOW_NE_AS("copy with other rdata", copy, original);
-
-  copy = original;
-  copy.type = mw::RecordType::AAAA;
-  EXPECT_SHOW_NE_AS("copy with other type", copy, original);
-}
-
-TEST(ResolveResult, DefaultIsEmptyNoError) {
-  mw::ResolveResult r;
-  EXPECT_SHOW_EQ(r.rcode, mw::Rcode::NoError);
-  EXPECT_SHOW_EQ(r.answers.size(), 0u);
-  EXPECT_SHOW_EQ(r.authority.size(), 0u);
-}
-
-TEST(ResolveResult, ErrorServFail) {
-  const auto r = mw::ResolveResult::error(mw::Rcode::ServFail);
+TEST(ErrorResult, ServFailHasNoRecords) {
+  const auto r = mw::error_result(mw::Rcode::ServFail);
   EXPECT_SHOW_EQ(r.rcode, mw::Rcode::ServFail);
-  EXPECT_SHOW_EQ(r.answers.size(), 0u);
+  EXPECT_SHOW_EQ(r.answer.size(), 0u);
   EXPECT_SHOW_EQ(r.authority.size(), 0u);
+  EXPECT_SHOW_EQ(r.additional.size(), 0u);
 }
 
-TEST(ResolveResult, ErrorKeepsEveryRcode) {
+TEST(ErrorResult, KeepsEveryRcode) {
   for (auto rc : {mw::Rcode::NoError, mw::Rcode::FormErr, mw::Rcode::ServFail,
                   mw::Rcode::NXDomain, mw::Rcode::NotImp, mw::Rcode::Refused}) {
-    EXPECT_SHOW_EQ(mw::ResolveResult::error(rc).rcode, rc);
+    EXPECT_SHOW_EQ(mw::error_result(rc).rcode, rc);
   }
 }
 
-TEST(ResolveResult, Equality) {
-  mw::ResolveResult original;
-  original.answers.push_back({"example.com.", mw::RecordType::A, 1, 60, {std::byte{1}}});
-  mw::ResolveResult copy = original;
-  EXPECT_SHOW_EQ_AS("unchanged copy", copy, original);
+// ---- backend::Resolver / ResolverFactory ----
 
-  copy.rcode = mw::Rcode::NXDomain;
-  EXPECT_SHOW_NE_AS("copy with other rcode", copy, original);
-
-  copy = original;
-  copy.authority.push_back(original.answers.front());
-  EXPECT_SHOW_NE_AS("copy with extra authority", copy, original);
-
-  EXPECT_SHOW_EQ(mw::ResolveResult::error(mw::Rcode::Refused),
-                 mw::ResolveResult::error(mw::Rcode::Refused));
-  EXPECT_SHOW_NE(mw::ResolveResult::error(mw::Rcode::Refused),
-                 mw::ResolveResult::error(mw::Rcode::ServFail));
-}
-
-// ---- resolver_interface.hpp: IResolver / ResolverFactory ----
-
-TEST(IResolver, IsAbstractWithVirtualDestructor) {
-  static_assert(std::is_abstract_v<mw::IResolver>);
-  static_assert(std::has_virtual_destructor_v<mw::IResolver>);
-  SUCCEED();
-}
-
-TEST(IResolver, CopyingIsDisabled) {
-  static_assert(!std::is_copy_constructible_v<mw::IResolver>);
-  static_assert(!std::is_copy_assignable_v<mw::IResolver>);
-  // The deleted copy is inherited by every subclass.
+TEST(Resolver, CopyingIsDisabled) {
+  static_assert(std::is_abstract_v<backend::Resolver>);
+  static_assert(std::has_virtual_destructor_v<backend::Resolver>);
   static_assert(!std::is_copy_constructible_v<RecordingResolver>);
   static_assert(!std::is_copy_assignable_v<RecordingResolver>);
-  // ...but subclasses can still be default-constructed.
-  static_assert(std::is_default_constructible_v<RecordingResolver>);
   SUCCEED();
 }
 
-TEST(IResolver, DispatchesThroughBasePointer) {
-  std::unique_ptr<mw::IResolver> resolver = std::make_unique<RecordingResolver>();
-  const auto result = resolver->resolve("example.com.", mw::RecordType::MX);
+TEST(Resolver, DispatchesThroughBasePointer) {
+  std::unique_ptr<backend::Resolver> resolver = std::make_unique<RecordingResolver>();
+  const auto result =
+      resolver->resolve(mw::DomainName("example.com."), mw::RecordType::MX, mw::RecordClass::IN);
 
-  EXPECT_SHOW_EQ(result, mw::ResolveResult::error(mw::Rcode::NXDomain));
+  EXPECT_SHOW_EQ(result.rcode, mw::Rcode::NXDomain);
   auto& concrete = static_cast<RecordingResolver&>(*resolver);
   EXPECT_SHOW_EQ(concrete.last_name, "example.com.");
   EXPECT_SHOW_EQ(concrete.last_type, mw::RecordType::MX);
 }
 
-TEST(IResolver, DeletingThroughBaseRunsSubclassDestructor) {
+TEST(Resolver, DeletingThroughBaseRunsSubclassDestructor) {
   bool destroyed = false;
   {
-    std::unique_ptr<mw::IResolver> resolver = std::make_unique<RecordingResolver>(&destroyed);
+    std::unique_ptr<backend::Resolver> resolver = std::make_unique<RecordingResolver>(&destroyed);
   }
   EXPECT_SHOW_EQ(destroyed, true);
 }
 
 TEST(ResolverFactory, EachCallReturnsNewInstance) {
   int built = 0;
-  mw::ResolverFactory factory = [&built]() -> std::unique_ptr<mw::IResolver> {
+  mw::ResolverFactory factory = [&built]() -> std::unique_ptr<backend::Resolver> {
     ++built;
     return std::make_unique<RecordingResolver>();
   };
@@ -236,45 +152,50 @@ TEST(ResultCallback, AcceptsMoveOnlyCallable) {
   mw::ResultCallback cb = [p = std::move(owned)](mw::ResolveResult r) { *p = r.rcode; };
   static_assert(!std::is_copy_constructible_v<mw::ResultCallback>);
 
-  cb(mw::ResolveResult::error(mw::Rcode::Refused));
+  cb(mw::error_result(mw::Rcode::Refused));
   EXPECT_SHOW_EQ(*seen, mw::Rcode::Refused);
 }
 
 TEST(QueryKey, Equality) {
-  const mw::QueryKey a{"example.com.", mw::RecordType::A};
-  EXPECT_SHOW_EQ(a, (mw::QueryKey{"example.com.", mw::RecordType::A}));
-  EXPECT_SHOW_NE(a, (mw::QueryKey{"example.com.", mw::RecordType::AAAA}));
-  EXPECT_SHOW_NE(a, (mw::QueryKey{"example.org.", mw::RecordType::A}));
+  const auto a = key("example.com.", mw::RecordType::A);
+  EXPECT_SHOW_EQ(a, key("example.com.", mw::RecordType::A));
+  EXPECT_SHOW_NE(a, key("example.com.", mw::RecordType::AAAA));
+  EXPECT_SHOW_NE(a, key("example.org.", mw::RecordType::A));
+}
+
+TEST(QueryKey, IsCaseInsensitive) {
+  EXPECT_SHOW_EQ(key("Example.COM.", mw::RecordType::A), key("example.com.", mw::RecordType::A));
+  EXPECT_SHOW_EQ(mw::QueryKeyHash{}(key("Example.COM.", mw::RecordType::A)),
+                 mw::QueryKeyHash{}(key("example.com.", mw::RecordType::A)));
 }
 
 TEST(QueryKeyHash, EqualKeysHashEqually) {
   static_assert(noexcept(mw::QueryKeyHash{}(std::declval<const mw::QueryKey&>())));
   const mw::QueryKeyHash hash;
-  const mw::QueryKey a{"example.com.", mw::RecordType::A};
-  const mw::QueryKey b{std::string("example.") + "com.", mw::RecordType::A};
-  EXPECT_SHOW_EQ(hash(b), hash(a));
+  EXPECT_SHOW_EQ(hash(key(std::string("example.") + "com.", mw::RecordType::A)),
+                 hash(key("example.com.", mw::RecordType::A)));
 }
 
 TEST(QueryKeyHash, MatchesSpecifiedFormula) {
-  const mw::QueryKey key{"example.com.", mw::RecordType::AAAA};
-  const std::size_t h1 = std::hash<std::string>{}(key.name);
+  const auto k = key("example.com.", mw::RecordType::AAAA);
+  const std::size_t h1 = std::hash<mw::DomainName>{}(k.name);
   const std::size_t h2 = std::hash<std::uint16_t>{}(28);
   const std::size_t expected = h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
-  EXPECT_SHOW_EQ(mw::QueryKeyHash{}(key), expected);
+  EXPECT_SHOW_EQ(mw::QueryKeyHash{}(k), expected);
 }
 
 TEST(QueryKeyHash, DifferentTypesAreDifferentKeys) {
   std::unordered_map<mw::QueryKey, int, mw::QueryKeyHash> map;
-  map[{"example.com.", mw::RecordType::A}] = 1;
-  map[{"example.com.", mw::RecordType::AAAA}] = 2;
-  map[{"example.com.", static_cast<mw::RecordType>(65)}] = 3;
+  map[key("example.com.", mw::RecordType::A)] = 1;
+  map[key("example.com.", mw::RecordType::AAAA)] = 2;
+  map[key("example.com.", static_cast<mw::RecordType>(65))] = 3;
 
   ASSERT_SHOW_EQ(map.size(), 3u);
-  EXPECT_SHOW_EQ((map[{"example.com.", mw::RecordType::A}]), 1);
-  EXPECT_SHOW_EQ((map[{"example.com.", mw::RecordType::AAAA}]), 2);
-  EXPECT_SHOW_EQ((map[{"example.com.", static_cast<mw::RecordType>(65)}]), 3);
-  EXPECT_SHOW_NE(mw::QueryKeyHash{}({"example.com.", mw::RecordType::A}),
-                 mw::QueryKeyHash{}({"example.com.", mw::RecordType::AAAA}));
+  EXPECT_SHOW_EQ(map[key("example.com.", mw::RecordType::A)], 1);
+  EXPECT_SHOW_EQ(map[key("example.com.", mw::RecordType::AAAA)], 2);
+  EXPECT_SHOW_EQ(map[key("example.com.", static_cast<mw::RecordType>(65))], 3);
+  EXPECT_SHOW_NE(mw::QueryKeyHash{}(key("example.com.", mw::RecordType::A)),
+                 mw::QueryKeyHash{}(key("example.com.", mw::RecordType::AAAA)));
 }
 
 TEST(Clock, SteadyClockFnTracksSteadyClock) {

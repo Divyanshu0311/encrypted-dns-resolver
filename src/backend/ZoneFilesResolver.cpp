@@ -55,7 +55,8 @@ namespace backend {
                 types::DomainName target(record.rdata, offset);
                 for (const types::RecordType t : { types::RecordType::A, types::RecordType::AAAA }) {
                     auto glue = types::find_records(zone, target, t);
-                    out.append_range(glue);
+                    // insert() rather than append_range(): append_range needs GCC 15
+                    out.insert(out.end(), glue.begin(), glue.end());
                 }
             } catch (const std::runtime_error&) {
                 // Malformed rdata: skip glue.
@@ -98,7 +99,8 @@ namespace backend {
                     if (sub.rcode == types::Rcode::Refused) return res;
 
                     res.rcode = sub.rcode;
-                    res.answer.append_range(sub.answer);
+                    // insert() rather than append_range(): append_range needs GCC 15
+                    res.answer.insert(res.answer.end(), sub.answer.begin(), sub.answer.end());
                     res.authority  = sub.authority;
                     res.additional = sub.additional;
                 } catch (const std::runtime_error&) {

@@ -3,7 +3,7 @@
 #include <string_view>
 #include <utility>
 
-#include "mw/dns_name.hpp"
+#include "utils.hpp"
 
 namespace mw {
 namespace {
@@ -60,6 +60,12 @@ private:
   std::size_t pos_ = 0;
 };
 
+// letters, digits, '-' and '_' (used by SRV/DKIM-style names); anything else is FORMERR
+bool is_name_char(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
+         c == '_';
+}
+
 std::optional<std::string> read_name(Reader &reader) {
   std::string name;
   std::size_t wire_length = 1;
@@ -84,7 +90,7 @@ std::optional<std::string> read_name(Reader &reader) {
     }
     for (std::byte b : *label) {
       const auto c = static_cast<char>(b);
-      if (c == '.') {
+      if (!is_name_char(c)) {
         return std::nullopt;
       }
       name.push_back(c);
@@ -205,15 +211,34 @@ bool write_name(Writer &writer, std::string_view text) {
   return true;
 }
 
+bool write_domain_name(Writer &writer, const DomainName &name) {
+  std::size_t wire_length = 1;
+  for (const auto &label : name.get_labels()) {
+    if (label.empty() || label.size() > kMaxLabelLength) {
+      return false;
+    }
+    wire_length += 1 + label.size();
+    if (wire_length > kMaxWireNameLength) {
+      return false;
+    }
+    writer.u8(static_cast<uint8_t>(label.size()));
+    for (char c : label) {
+      writer.u8(static_cast<uint8_t>(c));
+    }
+  }
+  writer.u8(0);
+  return true;
+}
+
 bool write_record(Writer &writer, const ResourceRecord &record) {
-  if (record.rdata.size() > kMaxMessageSize || !write_name(writer, record.name)) {
+  if (record.rdata.size() > kMaxMessageSize || !write_domain_name(writer, record.name)) {
     return false;
   }
   writer.u16(static_cast<uint16_t>(record.type));
-  writer.u16(record.dns_class);
+  writer.u16(static_cast<uint16_t>(record.rclass));
   writer.u32(record.ttl);
   writer.u16(static_cast<uint16_t>(record.rdata.size()));
-  writer.bytes(record.rdata);
+  writer.bytes(std::as_bytes(std::span(record.rdata)));
   return true;
 }
 
@@ -250,14 +275,14 @@ uint16_t response_flags(bool recursion_desired, Rcode rcode) {
 
 std::optional<std::vector<std::byte>> try_encode(const DnsQuery &query,
                                                  const ResolveResult &result) {
-  if (result.records.size() > kMaxSectionCount || result.authority.size() > kMaxSectionCount) {
+  if (result.answer.size() > kMaxSectionCount || result.authority.size() > kMaxSectionCount) {
     return std::nullopt;
   }
   Writer writer;
   writer.u16(query.id);
   writer.u16(response_flags(query.recursion_desired, result.rcode));
   writer.u16(1);
-  writer.u16(static_cast<uint16_t>(result.records.size()));
+  writer.u16(static_cast<uint16_t>(result.answer.size()));
   writer.u16(static_cast<uint16_t>(result.authority.size()));
   writer.u16(query.has_edns ? 1 : 0);
 
@@ -267,7 +292,7 @@ std::optional<std::vector<std::byte>> try_encode(const DnsQuery &query,
   writer.u16(static_cast<uint16_t>(query.type));
   writer.u16(kClassIn);
 
-  for (const auto &record : result.records) {
+  for (const auto &record : result.answer) {
     if (!write_record(writer, record)) {
       return std::nullopt;
     }
@@ -320,10 +345,8 @@ std::expected<DnsQuery, ParseError> parse_query(std::span<const std::byte> wire)
   if (!raw_name) {
     return fail(Rcode::FormErr);
   }
-  std::string name = normalize(*raw_name);
-  if (!is_valid(name)) {
-    return fail(Rcode::FormErr);
-  }
+  // read_name already enforces label and name lengths
+  std::string name = raw_name->empty() ? "." : utils::lower(*raw_name);
 
   const auto qtype = reader.u16();
   const auto qclass = reader.u16();
@@ -359,7 +382,7 @@ std::vector<std::byte> encode_response(const DnsQuery &query, const ResolveResul
   if (auto encoded = try_encode(query, result)) {
     return std::move(*encoded);
   }
-  if (auto encoded = try_encode(query, ResolveResult::error(Rcode::ServFail))) {
+  if (auto encoded = try_encode(query, error_result(Rcode::ServFail))) {
     return std::move(*encoded);
   }
   return encode_error(query.id, Rcode::ServFail);

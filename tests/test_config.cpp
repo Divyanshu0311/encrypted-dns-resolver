@@ -291,6 +291,27 @@ TEST(ParseConfig, TlsCertAndKeyGoTogether) {
   EXPECT_TRUE(mw::parse_config("mode = recursive\ntls_cert = a.pem\ntls_key = a.key\n").has_value());
 }
 
+TEST(ParseConfig, AdminPageIsOffByDefault) {
+  const auto cfg = mw::parse_config("mode = recursive\n");
+  ASSERT_TRUE(cfg.has_value()) << cfg.error();
+  EXPECT_FALSE(cfg->admin_listen.has_value());
+  EXPECT_SHOW_EQ(cfg->admin_ui_dir, std::filesystem::path("gui"));
+}
+
+TEST(ParseConfig, AdminListen) {
+  const auto cfg = mw::parse_config("mode = recursive\nadmin_listen = 127.0.0.1\nadmin_ui_dir = web\n");
+  ASSERT_TRUE(cfg.has_value()) << cfg.error();
+  ASSERT_TRUE(cfg->admin_listen.has_value());
+  EXPECT_SHOW_EQ(cfg->admin_listen->host, std::string("127.0.0.1"));
+  EXPECT_SHOW_EQ(cfg->admin_listen->port, 8080);
+  EXPECT_SHOW_EQ(cfg->admin_ui_dir, std::filesystem::path("web"));
+
+  const auto off = mw::parse_config("mode = recursive\nadmin_listen = off\n");
+  ASSERT_TRUE(off.has_value()) << off.error();
+  EXPECT_FALSE(off->admin_listen.has_value());
+  EXPECT_TRUE(error_on_line("mode = recursive\nadmin_listen = 127.0.0.1:99999\n", 2));
+}
+
 // ---- load_config ----
 
 TEST(LoadConfig, MissingFileIsAnError) {

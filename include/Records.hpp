@@ -156,6 +156,8 @@ namespace types {
         std::vector<ResourceRecord> answer;
         std::vector<ResourceRecord> authority;
         std::vector<ResourceRecord> additional;
+        // where the answer came from ("cache", "upstream 1.1.1.1:53", "timed out", ...), for logs and the admin page
+        std::string served_by;
     };
 } // namespace types
 

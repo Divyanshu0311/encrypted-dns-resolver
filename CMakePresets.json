@@ -3,18 +3,18 @@
   "configurePresets": [
     {
       "name": "local",
-      "displayName": "Local g++-14 debug build",
+      "displayName": "Local g++-15 debug build",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/local",
       "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "g++-14",
+        "CMAKE_CXX_COMPILER": "g++-15",
         "CMAKE_BUILD_TYPE": "Debug"
       }
     },
     {
       "name": "release",
       "inherits": "local",
-      "displayName": "Local g++-14 optimised build",
+      "displayName": "Local g++-15 optimised build",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"

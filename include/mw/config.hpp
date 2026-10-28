@@ -3,6 +3,7 @@
 #include<cstdint>
 #include<expected>
 #include<filesystem>
+#include<optional>
 #include<string>
 #include<string_view>
 #include<vector>
@@ -60,6 +61,10 @@ struct Config {
   std::size_t max_connections_per_source = 32; // 0-100000, 0 means no limit. IPv4 per address, IPv6 per /64
   Ms idle_timeout{10000};                  // 1000-300000
   std::filesystem::path blocked_domains_file; // empty means no domain blocking
+
+  // admin page (HTTP, no TLS: keep it on loopback)
+  std::optional<ListenAddress> admin_listen;  // unset means no admin page
+  std::filesystem::path admin_ui_dir = "gui"; // where index.html is served from
 };
 
 // 1.1.1.1, 1.1.1.1:53, [2606:4700::1111]:53 or a bare 2606:4700::1111. port defaults to 53
@@ -67,6 +72,9 @@ std::expected<Upstream, std::string> parse_upstream(std::string_view s);
 
 // same forms as parse_upstream, port defaults to 853
 std::expected<ListenAddress, std::string> parse_listen(std::string_view s);
+
+// same forms, port defaults to 8080. "off" gives nullopt
+std::expected<std::optional<ListenAddress>, std::string> parse_admin_listen(std::string_view s);
 
 // parses `key = value` text only, touches no files. errors look like "line 7: unknown key 'worker'"
 std::expected<Config, std::string> parse_config(std::string_view text);

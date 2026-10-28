@@ -281,6 +281,15 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
   else if (key == "blocked_domains_file") {
     cfg.blocked_domains_file = std::string(value);
   }
+  else if (key == "admin_listen") {
+    auto admin = parse_admin_listen(value);
+    if (!admin)
+      return std::unexpected(admin.error());
+    cfg.admin_listen = std::move(*admin);
+  }
+  else if (key == "admin_ui_dir") {
+    cfg.admin_ui_dir = std::string(value);
+  }
   else {
     return std::unexpected(std::format("unknown key '{}'", key));
   }
@@ -298,6 +307,15 @@ std::expected<Upstream, std::string> parse_upstream(std::string_view s) {
 
 std::expected<ListenAddress, std::string> parse_listen(std::string_view s) {
   auto hp = parse_host_port(s, 853, "listen");
+  if (!hp)
+    return std::unexpected(hp.error());
+  return ListenAddress{std::move(hp->host), hp->port};
+}
+
+std::expected<std::optional<ListenAddress>, std::string> parse_admin_listen(std::string_view s) {
+  if (utils::lower(std::string(s)) == "off")
+    return std::nullopt;
+  auto hp = parse_host_port(s, 8080, "admin_listen");
   if (!hp)
     return std::unexpected(hp.error());
   return ListenAddress{std::move(hp->host), hp->port};

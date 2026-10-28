@@ -8,15 +8,17 @@ and guarantees every query gets exactly one answer (SERVFAIL on timeout or overl
 ## Prerequisites
 
 - CMake 3.21+ (for `CMakePresets.json`)
-- `g++-14` (C++23: `std::expected`, `std::format`, `std::move_only_function`)
+- `g++-15` (C++23: `std::expected`, `std::format`, `std::move_only_function`, and the GCC 15 library's
+  `vector::append_range` and `ranges::ends_with`)
+- OpenSSL 3 development headers (`libssl-dev`)
 - Internet access on the first configure (GoogleTest is fetched by CMake)
 
-On Ubuntu 22.04, `g++-14` comes from the toolchain PPA:
+On Ubuntu 22.04, `g++-15` comes from the toolchain PPA:
 
 ```sh
 sudo add-apt-repository ppa:ubuntu-toolchain-r/test
 sudo apt update
-sudo apt install g++-14 cmake
+sudo apt install g++-15 cmake libssl-dev
 ```
 
 ## Building and testing
@@ -58,6 +60,38 @@ Options: `--threads`, `--queries`, `--dup-ratio`, `--workers`,
 `--stub-delay-ms`, `--stub-fail-rate`, `--stub-throw-rate`, `--qps` (per thread),
 `--failure-threshold` (default 3), `--cooldown-ms` (default 200).
 
+## Running the demo
+
+```sh
+cmake --preset release && cmake --build --preset release
+./tools/make_demo_cert.sh                      # self-signed config/server.pem + .key (git-ignored)
+./build/release/dns_server config/demo.conf    # DoT on 127.0.0.1:8853, admin page on :8080
+```
+
+Open <http://127.0.0.1:8080/>. The admin page shows live metrics (answers per second, latency
+histogram, cache hit rate, coalescing, rate limiting, per-worker circuit breakers, a live query feed)
+and runs five tests against the running server:
+
+| Test | What it shows |
+|---|---|
+| Lookup | a name's addresses, the latency, and where the answer came from (cache, records file, upstream, recursive) |
+| Compare | the same name through forwarding to 8.8.8.8 / 1.1.1.1 / 9.9.9.9 and recursion from the root servers, cold then cached |
+| Load | thousands of queries through the full middleware path from 1000 simulated clients |
+| Abuse | one client floods the server: rate limited, then blocked, while other clients carry on |
+| Failures | inject lookup failures and watch the circuit breakers open, half-open and close |
+
+Real encrypted queries show up in the feed too:
+
+```sh
+dig +tls @127.0.0.1 -p 8853 www.wikipedia.org     # BIND 9.18+
+dig +tls @127.0.0.1 -p 8853 nas.lan               # from config/demo.hosts
+dig +tls @127.0.0.1 -p 8853 ad.doubleclick.net    # REFUSED, from config/blocked_domains.txt
+```
+
+Some networks (campus, corporate) only let DNS through to a few resolvers and drop queries without the
+RD bit; there recursion and some upstreams time out. Check the Compare test on the demo network first,
+and keep a phone hotspot as a fallback.
+
 ## Configuration
 
 The middleware reads `key = value` files; see `config/middleware.example.conf` for every key.
@@ -66,11 +100,12 @@ The middleware reads `key = value` files; see `config/middleware.example.conf` f
 
 ```
 include/           shared types (DomainName, IP, Records) and utils
-include/backend/   resolvers (zone files, hosts file, forwarding, recursive) and the cache
+include/backend/   resolvers (zone files, hosts file, forwarding, recursive), the cache, upstream queries
 include/mw/        middleware and front-end headers (namespace mw)
 src/               library sources
-tools/             load_gen
+tools/             load_gen, make_demo_cert.sh
+gui/               the admin page (served by dns_server when admin_listen is set)
 tests/             GoogleTest suite; tests/support/ holds printers and fakes
-config/            example configuration
+config/            example and demo configuration
 docs/              front-end design notes
 ```

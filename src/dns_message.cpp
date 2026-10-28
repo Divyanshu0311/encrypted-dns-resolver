@@ -1,9 +1,11 @@
-#include "mw/dns_message.hpp"
+#include "dns_message.hpp"
 
+#include <algorithm>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
-namespace mw {
+namespace types {
     namespace {
 
         constexpr std::size_t kHeaderSize        = 12;
@@ -19,6 +21,8 @@ namespace mw {
         constexpr std::size_t kPaddingBlockSize  = 468;
 
         constexpr uint16_t kFlagResponse           = 0x8000;
+        constexpr uint16_t kFlagAuthoritative      = 0x0400;
+        constexpr uint16_t kFlagTruncated          = 0x0200;
         constexpr uint16_t kFlagRecursionDesired   = 0x0100;
         constexpr uint16_t kFlagRecursionAvailable = 0x0080;
 
@@ -316,6 +320,112 @@ namespace mw {
             return writer.take();
         }
 
+        uint16_t u16_at(const std::vector<uint8_t>& msg, std::size_t pos) {
+            return static_cast<uint16_t>(msg[pos] << 8 | msg[pos + 1]);
+        }
+
+        // where the name at pos ends in the stream. a compression pointer ends it after two bytes
+        std::optional<std::size_t> skip_name(const std::vector<uint8_t>& msg, std::size_t pos) {
+            while (true) {
+                if (pos >= msg.size()) {
+                    return std::nullopt;
+                }
+                const uint8_t length = msg[pos];
+                if (length == 0) {
+                    return pos + 1;
+                }
+                if ((length & 0xC0) == 0xC0) {
+                    if (pos + 2 > msg.size()) {
+                        return std::nullopt;
+                    }
+                    return pos + 2;
+                }
+                if ((length & 0xC0) != 0) {
+                    return std::nullopt;
+                }
+                pos += 1 + length;
+            }
+        }
+
+        // the decompressed name at pos, and where it ends in the stream
+        std::optional<std::pair<DomainName, std::size_t>> read_wire_name(const std::vector<uint8_t>& msg, std::size_t pos) {
+            const auto end = skip_name(msg, pos);
+            if (!end) {
+                return std::nullopt;
+            }
+            try {
+                return std::pair{ DomainName(msg, pos), *end };
+            } catch (const std::runtime_error&) {
+                return std::nullopt;
+            }
+        }
+
+        // rdata made of fixed bytes, then names, then fixed bytes again
+        struct RdataLayout {
+            std::size_t prefix = 0;
+            int names          = 1;
+            std::size_t suffix = 0;
+        };
+
+        // the types whose rdata may hold compressed names (RFC 3597 section 4, plus SRV and DNAME seen in the wild)
+        std::optional<RdataLayout> rdata_layout(RecordType type) {
+            switch (type) {
+            case RecordType::NS:
+            case RecordType::MD:
+            case RecordType::MF:
+            case RecordType::CNAME:
+            case RecordType::MB:
+            case RecordType::MG:
+            case RecordType::MR:
+            case RecordType::PTR:
+            case RecordType::DNAME:
+                return RdataLayout{ 0, 1, 0 };
+            case RecordType::SOA:
+                return RdataLayout{ 0, 2, 20 }; // mname, rname, serial refresh retry expire minimum
+            case RecordType::MINFO:
+            case RecordType::RP:
+                return RdataLayout{ 0, 2, 0 };
+            case RecordType::MX:
+            case RecordType::AFSDB:
+            case RecordType::RT:
+            case RecordType::KX:
+                return RdataLayout{ 2, 1, 0 }; // preference, name
+            case RecordType::PX:
+                return RdataLayout{ 2, 2, 0 };
+            case RecordType::SRV:
+                return RdataLayout{ 6, 1, 0 }; // priority, weight, port, target
+            default:
+                return std::nullopt;
+            }
+        }
+
+        std::optional<std::vector<uint8_t>> read_rdata(const std::vector<uint8_t>& msg, std::size_t pos, std::size_t length, RecordType type) {
+            const std::size_t end = pos + length;
+            const auto layout     = rdata_layout(type);
+            if (!layout) {
+                return std::vector<uint8_t>(msg.begin() + pos, msg.begin() + end);
+            }
+            if (layout->prefix > length) {
+                return std::nullopt;
+            }
+            std::vector<uint8_t> out(msg.begin() + pos, msg.begin() + pos + layout->prefix);
+            pos += layout->prefix;
+            for (int i = 0; i < layout->names; ++i) {
+                const auto name = read_wire_name(msg, pos);
+                if (!name || name->second > end) {
+                    return std::nullopt;
+                }
+                const std::vector<uint8_t> bytes = name->first;
+                out.insert(out.end(), bytes.begin(), bytes.end());
+                pos = name->second;
+            }
+            if (end - pos != layout->suffix) {
+                return std::nullopt;
+            }
+            out.insert(out.end(), msg.begin() + pos, msg.begin() + end);
+            return out;
+        }
+
     } // namespace
 
     std::expected<DnsQuery, ParseError> parse_query(std::span<const std::byte> wire) {
@@ -393,7 +503,9 @@ namespace mw {
         if (auto encoded = try_encode(query, result)) {
             return std::move(*encoded);
         }
-        if (auto encoded = try_encode(query, error_result(Rcode::ServFail))) {
+        ResolveResult servfail;
+        servfail.rcode = Rcode::ServFail;
+        if (auto encoded = try_encode(query, servfail)) {
             return std::move(*encoded);
         }
         return encode_error(query.id, Rcode::ServFail);
@@ -438,4 +550,108 @@ namespace mw {
         return encode_error(*error.id, error.rcode);
     }
 
-} // namespace mw
+    std::vector<std::byte> encode_query(uint16_t id, const DomainName& name, RecordType type, RecordClass rclass, bool recursion_desired) {
+        Writer writer;
+        writer.u16(id);
+        writer.u16(recursion_desired ? kFlagRecursionDesired : 0);
+        writer.u16(1);
+        writer.u16(0);
+        writer.u16(0);
+        writer.u16(1);
+        if (!write_domain_name(writer, name)) {
+            throw std::invalid_argument("encode_query: name does not fit in a DNS message");
+        }
+        writer.u16(static_cast<uint16_t>(type));
+        writer.u16(static_cast<uint16_t>(rclass));
+        write_opt_record(writer, false);
+        return writer.take();
+    }
+
+    std::optional<DnsResponse> parse_response(std::span<const std::byte> wire) {
+        if (wire.size() < kHeaderSize || wire.size() > kMaxMessageSize) {
+            return std::nullopt;
+        }
+        // DomainName reads compressed names out of a byte vector
+        std::vector<uint8_t> msg(wire.size());
+        std::ranges::transform(wire, msg.begin(), [](std::byte b) { return std::to_integer<uint8_t>(b); });
+
+        const uint16_t flags = u16_at(msg, 2);
+        if (!(flags & kFlagResponse)) {
+            return std::nullopt;
+        }
+        DnsResponse response;
+        response.id                     = u16_at(msg, 0);
+        response.truncated              = flags & kFlagTruncated;
+        response.authoritative          = flags & kFlagAuthoritative;
+        const uint16_t question_count   = u16_at(msg, 4);
+        const uint16_t answer_count     = u16_at(msg, 6);
+        const uint16_t authority_count  = u16_at(msg, 8);
+        const uint16_t additional_count = u16_at(msg, 10);
+        if (question_count > 1) {
+            return std::nullopt;
+        }
+
+        std::size_t pos = kHeaderSize;
+        if (question_count == 1) {
+            auto name = read_wire_name(msg, pos);
+            if (!name || name->second + 4 > msg.size()) {
+                return std::nullopt;
+            }
+            pos                   = name->second;
+            response.question     = std::move(name->first);
+            response.qtype        = static_cast<RecordType>(u16_at(msg, pos));
+            response.qclass       = static_cast<RecordClass>(u16_at(msg, pos + 2));
+            response.has_question = true;
+            pos += 4;
+        }
+        // a truncated reply may stop mid record, and the caller asks again over TCP anyway
+        if (response.truncated) {
+            return response;
+        }
+
+        uint8_t extended_rcode = 0;
+        auto read_section      = [&](uint16_t count, std::vector<ResourceRecord>& out, bool is_additional) {
+            for (uint16_t i = 0; i < count; ++i) {
+                auto name = read_wire_name(msg, pos);
+                if (!name || name->second + 10 > msg.size()) {
+                    return false;
+                }
+                pos                   = name->second;
+                const uint16_t type   = u16_at(msg, pos);
+                const uint16_t rclass = u16_at(msg, pos + 2);
+                const uint32_t ttl    = static_cast<uint32_t>(u16_at(msg, pos + 4)) << 16 | u16_at(msg, pos + 6);
+                const uint16_t length = u16_at(msg, pos + 8);
+                pos += 10;
+                if (pos + length > msg.size()) {
+                    return false;
+                }
+                if (type == kTypeOpt) {
+                    if (!is_additional) {
+                        return false;
+                    }
+                    extended_rcode = static_cast<uint8_t>(ttl >> 24);
+                    pos += length;
+                    continue;
+                }
+                auto rdata = read_rdata(msg, pos, length, static_cast<RecordType>(type));
+                if (!rdata) {
+                    return false;
+                }
+                pos += length;
+                // RFC 2181 section 8: a TTL with the top bit set is treated as zero
+                out.push_back(ResourceRecord{ std::move(name->first), static_cast<RecordType>(type), static_cast<RecordClass>(rclass),
+                                              ttl > 0x7FFFFFFF ? 0 : ttl, std::move(*rdata) });
+            }
+            return true;
+        };
+        if (!read_section(answer_count, response.result.answer, false) || !read_section(authority_count, response.result.authority, false) ||
+            !read_section(additional_count, response.result.additional, true)) {
+            return std::nullopt;
+        }
+
+        const unsigned rcode   = static_cast<unsigned>(extended_rcode) << 4 | (flags & 0xF);
+        response.result.rcode  = rcode <= static_cast<unsigned>(Rcode::DSOTypeNI) ? static_cast<Rcode>(rcode) : Rcode::ServFail;
+        return response;
+    }
+
+} // namespace types

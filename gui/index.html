@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNS Middleware Console</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f1;
+  --surface-1: #fcfcfb;
+  --surface-2: #f0efec;
+  --border: #dddcd6;
+  --grid: #e6e5e0;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7973;
+  --accent: #2a78d6;
+  --accent-ink: #ffffff;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --good-ink: #006300;
+  --critical-ink: #b02a2a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #262624;
+    --border: #383835;
+    --grid: #2c2c2a;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e86;
+    --accent: #3987e5;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --good-ink: #4fd14f;
+    --critical-ink: #f07c7c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #262624;
+  --border: #383835;
+  --grid: #2c2c2a;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8f8e86;
+  --accent: #3987e5;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --good-ink: #4fd14f;
+  --critical-ink: #f07c7c;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary); font: 14px/1.45 var(--sans); }
+header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface-1); }
+header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.dot.ok { background: var(--good); }
+.dot.bad { background: var(--critical); }
+header .spacer { flex: 1; }
+button.icon { background: none; border: 1px solid var(--border); color: var(--text-secondary); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+
+main { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 20px; padding: 20px 24px 40px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 1000px) { main { grid-template-columns: minmax(0, 1fr); padding: 16px; } }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 20px; min-width: 0; }
+.card h2 { font-size: 14px; margin: 0 0 4px; font-weight: 650; }
+.card .sub { color: var(--text-secondary); font-size: 12.5px; margin: 0 0 12px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }
+.tabs button { border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); padding: 6px 12px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
+.tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.panel[hidden] { display: none; }
+
+label { display: block; font-size: 12px; color: var(--text-secondary); margin: 10px 0 4px; }
+input, select { width: 100%; font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-0); color: var(--text-primary); }
+input[type="range"] { padding: 0; }
+.row { display: flex; gap: 10px; }
+.row > * { flex: 1; min-width: 0; }
+.go { margin-top: 12px; width: 100%; font: inherit; font-weight: 600; padding: 9px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+.go.secondary { background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--border); }
+.go:disabled { opacity: .55; cursor: progress; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chips button { font: inherit; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-0); color: var(--text-secondary); cursor: pointer; }
+
+.result { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+.result:empty { display: none; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+.kv dt { color: var(--text-secondary); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--text-primary); }
+.badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+.badge.good::before { background: var(--good); }
+.badge.warning::before { background: var(--warning); }
+.badge.serious::before { background: var(--serious); }
+.badge.critical::before { background: var(--critical); }
+.big { font-size: 26px; font-weight: 650; }
+.answers { margin: 8px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12.5px; }
+.answers li { padding: 3px 0; border-bottom: 1px dashed var(--grid); overflow-wrap: anywhere; }
+.answers .t { color: var(--text-muted); }
+.error { color: var(--critical-ink); }
+.note { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+
+.progress { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin: 10px 0; }
+.progress > div { height: 100%; width: 0; background: var(--accent); border-radius: 4px; transition: width .3s; }
+
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+@media (max-width: 700px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--text-secondary); }
+.tile .v { font-size: 24px; font-weight: 650; font-family: var(--mono); font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .s { font-size: 11.5px; color: var(--text-muted); }
+
+.charts { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 1250px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: 190px; overflow: visible; }
+.chart text { fill: var(--text-muted); font-size: 11px; font-family: var(--sans); }
+.tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgb(0 0 0 / .12); white-space: nowrap; display: none; z-index: 5; color: var(--text-primary); }
+
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: 8px; font-size: 12.5px; }
+.bar .track { height: 12px; background: var(--surface-2); border-radius: 0 4px 4px 0; }
+.bar .fill { height: 100%; border-radius: 0 4px 4px 0; background: var(--series-1); min-width: 0; }
+.bar .n { text-align: right; font-family: var(--mono); color: var(--text-secondary); }
+
+.workers { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.worker { border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 12px; }
+.worker .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-weight: 600; font-size: 13px; }
+.worker .line { display: flex; justify-content: space-between; color: var(--text-secondary); }
+.worker .line span:last-child { font-family: var(--mono); color: var(--text-primary); }
+
+.feed-wrap { max-height: 420px; overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; color: var(--text-secondary); font-weight: 600; padding: 6px 8px; position: sticky; top: 0; background: var(--surface-1); border-bottom: 1px solid var(--border); }
+td { padding: 5px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+td.mono { font-family: var(--mono); }
+td.r { text-align: right; font-family: var(--mono); }
+tr.new { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: color-mix(in srgb, var(--accent) 18%, transparent); } to { background: transparent; } }
+.feed-tools { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 12.5px; color: var(--text-secondary); }
+.feed-tools input[type="checkbox"] { width: auto; }
+.feed-tools label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-size: 12.5px; }
+.compare td.bar-cell { width: 45%; }
+.compare .mini { height: 10px; background: var(--series-1); border-radius: 0 4px 4px 0; }
+.compare .mini.warm { background: var(--series-2); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); margin: 6px 0 4px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--series-1); }
+.legend span.warm::before { background: var(--series-2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>DNS Middleware Console</h1>
+  <span class="pill"><span class="dot" id="conn-dot"></span><span id="conn">connecting…</span></span>
+  <span class="pill" id="mode-pill">mode: –</span>
+  <span class="pill" id="upstream-pill">upstreams: –</span>
+  <span class="pill" id="uptime-pill">up –</span>
+  <span class="spacer"></span>
+  <button class="icon" id="theme" title="Switch light / dark">◐ Theme</button>
+</header>
+
+<main>
+  <!-- ======================= tests ======================= -->
+  <section>
+    <div class="card">
+      <h2>Tests</h2>
+      <p class="sub">Each test talks to the running server. Watch the metrics on the right react.</p>
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="lookup" aria-selected="true">Lookup</button>
+        <button role="tab" data-tab="compare" aria-selected="false">Compare</button>
+        <button role="tab" data-tab="load" aria-selected="false">Load</button>
+        <button role="tab" data-tab="flood" aria-selected="false">Abuse</button>
+        <button role="tab" data-tab="faults" aria-selected="false">Failures</button>
+      </div>
+
+      <!-- 1. lookup -->
+      <div class="panel" id="panel-lookup">
+        <label for="lk-name">Domain</label>
+        <input id="lk-name" value="www.google.com" autocomplete="off" spellcheck="false">
+        <div class="chips" id="lk-chips">
+          <button data-name="www.google.com">www.google.com</button>
+          <button data-name="github.com">github.com</button>
+          <button data-name="en.wikipedia.org">en.wikipedia.org</button>
+          <button data-name="does-not-exist.example">NXDOMAIN</button>
+        </div>
+        <div class="row">
+          <div><label for="lk-type">Type</label>
+            <select id="lk-type"><option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>NS</option><option>TXT</option><option>SOA</option></select></div>
+          <div><label for="lk-via">Resolver</label><select id="lk-via"></select></div>
+        </div>
+        <button class="go" id="lk-go">Resolve</button>
+        <div class="result" id="lk-result"></div>
+      </div>
+
+      <!-- 2. compare -->
+      <div class="panel" id="panel-compare" hidden>
+        <p class="sub">Asks every resolver the same question twice: first with an empty cache, then again. Shows what forwarding, recursion and caching each cost.</p>
+        <label for="cmp-name">Domain</label>
+        <input id="cmp-name" value="www.wikipedia.org" spellcheck="false">
+        <button class="go" id="cmp-go">Run comparison</button>
+        <div class="result" id="cmp-result"></div>
+      </div>
+
+      <!-- 3. load -->
+      <div class="panel" id="panel-load" hidden>
+        <p class="sub">Sends many queries through the full middleware path (rate limiter → coalescing → workers → cache → upstream) from 1000 simulated clients.</p>
+        <div class="row">
+          <div><label for="ld-count">Queries</label><input id="ld-count" type="number" value="20000" min="1" max="200000"></div>
+          <div><label for="ld-conc">In flight at once</label><input id="ld-conc" type="number" value="200" min="1" max="5000"></div>
+        </div>
+        <label for="ld-names">Names</label>
+        <select id="ld-names">
+          <option value="popular">40 popular sites (cache friendly)</option>
+          <option value="unique">unique random names (cache busting, max 5000)</option>
+        </select>
+        <button class="go" id="ld-go">Start load test</button>
+        <div class="result" id="ld-result"></div>
+      </div>
+
+      <!-- 4. flood -->
+      <div class="panel" id="panel-flood" hidden>
+        <p class="sub">One client fires a burst of queries at once. The per-client rate limiter refuses the excess, and repeated offences get the client blocked.</p>
+        <div class="row">
+          <div><label for="fl-client">Client address</label><input id="fl-client" value="203.0.113.66" spellcheck="false"></div>
+          <div><label for="fl-count">Queries</label><input id="fl-count" type="number" value="3000" min="1" max="50000"></div>
+        </div>
+        <button class="go" id="fl-go">Flood</button>
+        <div class="result" id="fl-result"></div>
+      </div>
+
+      <!-- 5. faults -->
+      <div class="panel" id="panel-faults" hidden>
+        <p class="sub">Makes a share of lookups fail inside the workers. After enough failures in a row a worker's circuit breaker opens, rests, then lets one probe query through.</p>
+        <label for="ft-rate">Injected failure rate: <b id="ft-rate-v" class="num">0%</b></label>
+        <input id="ft-rate" type="range" min="0" max="100" step="5" value="0">
+        <div class="row">
+          <button class="go secondary" id="ft-apply">Apply</button>
+          <button class="go" id="ft-traffic">Send 3000 queries</button>
+        </div>
+        <p class="note">Watch the <b>Workers</b> panel: breakers go open, then half-open, then closed again once you set the rate back to 0%.</p>
+        <div class="result" id="ft-result"></div>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button class="go secondary" id="flush">Flush all caches</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Workers</h2>
+      <p class="sub">One thread per worker, each with its own resolver and circuit breaker.</p>
+      <div class="workers" id="workers"></div>
+    </div>
+
+    <div class="card">
+      <h2>Replies by result</h2>
+      <p class="sub">DNS response codes since start.</p>
+      <div class="bars" id="rcodes"></div>
+    </div>
+  </section>
+
+  <!-- ======================= metrics ======================= -->
+  <section>
+    <div class="tiles">
+      <div class="tile"><div class="k">Queries / s</div><div class="v" id="t-qps">–</div><div class="s">last second</div></div>
+      <div class="tile"><div class="k">Received</div><div class="v" id="t-received">–</div><div class="s" id="t-replies">–</div></div>
+      <div class="tile"><div class="k">Latency (median)</div><div class="v" id="t-p50">–</div><div class="s" id="t-p99">–</div></div>
+      <div class="tile"><div class="k">Cache hit rate</div><div class="v" id="t-hit">–</div><div class="s" id="t-cache">–</div></div>
+      <div class="tile"><div class="k">Coalesced</div><div class="v" id="t-coal">–</div><div class="s">duplicates resolved once</div></div>
+      <div class="tile"><div class="k">Rate limited</div><div class="v" id="t-rl">–</div><div class="s" id="t-rl-s">–</div></div>
+      <div class="tile"><div class="k">Timeouts</div><div class="v" id="t-to">–</div><div class="s" id="t-ov">–</div></div>
+      <div class="tile"><div class="k">Healthy workers</div><div class="v" id="t-workers">–</div><div class="s" id="t-trips">–</div></div>
+    </div>
+
+    <div class="charts">
+      <div class="card">
+        <h2>Answers per second</h2>
+        <p class="sub">Last two minutes. Hover for exact values.</p>
+        <div class="chart" id="qps-chart"><svg aria-label="Answers per second over time"></svg><div class="tip"></div></div>
+      </div>
+      <div class="card">
+        <h2>Latency distribution</h2>
+        <p class="sub">Every reply since start, by time to answer.</p>
+        <div class="chart" id="lat-chart"><svg aria-label="Latency histogram"></svg><div class="tip"></div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Live queries</h2>
+        <p class="sub">Every DNS-over-TLS query and every Lookup test, newest first. Load and abuse tests are left out.</p>
+        <div class="feed-tools">
+          <label><input type="checkbox" id="feed-pause"> Pause</label>
+          <span id="feed-count"></span>
+        </div>
+        <div class="feed-wrap">
+          <table>
+            <thead><tr><th>Time</th><th>Client</th><th>Name</th><th>Type</th><th>Result</th><th>Served by</th><th style="text-align:right">ms</th></tr></thead>
+            <tbody id="feed"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const fmt = new Intl.NumberFormat();
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ms = (v) => (v == null ? "–" : v < 10 ? v.toFixed(2) + " ms" : v < 1000 ? v.toFixed(0) + " ms" : (v / 1000).toFixed(2) + " s");
+
+// ---------- theme ----------
+try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+$("theme").onclick = () => {
+  const dark = getComputedStyle(document.documentElement).colorScheme === "dark";
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("theme", document.documentElement.dataset.theme); } catch (e) {}
+  drawCharts();
+};
+
+// ---------- api ----------
+async function api(path, method = "GET") {
+  const r = await fetch(path, { method });
+  const body = await r.json().catch(() => ({ error: "bad response" }));
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+
+// ---------- status badges ----------
+const RCODE_STATUS = { NOERROR: "good", NXDOMAIN: "warning", REFUSED: "serious", SERVFAIL: "critical", FORMERR: "critical" };
+const rcodeBadge = (rc) => `<span class="badge ${RCODE_STATUS[rc] || ""}">${esc(rc)}</span>`;
+function servedBadge(s) {
+  if (!s) return "";
+  const cls = s === "cache" ? "good" : s.startsWith("upstream") || s.startsWith("recursive") || s === "records file" ? "" : "serious";
+  return `<span class="badge ${cls}">${esc(s)}</span>`;
+}
+
+// ---------- tabs ----------
+document.querySelectorAll("[data-tab]").forEach((b) => (b.onclick = () => {
+  document.querySelectorAll("[data-tab]").forEach((x) => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll(".panel").forEach((p) => (p.hidden = p.id !== "panel-" + b.dataset.tab));
+}));
+
+// ---------- status ----------
+let status = null;
+async function loadStatus() {
+  status = await api("/api/status");
+  $("mode-pill").textContent = "mode: " + status.mode;
+  $("upstream-pill").textContent = status.mode === "forwarding" ? "upstreams: " + status.upstreams.join(", ") : "root servers";
+  const via = $("lk-via");
+  via.innerHTML = `<option value="server">This server (full middleware path)</option>` +
+    status.labs.map((l) => `<option value="${esc(l.id)}">${esc(l.label)}</option>`).join("");
+  $("ft-rate").value = 0;
+}
+
+// ---------- 1. lookup ----------
+function cleanName(raw) {
+  // accept pasted URLs: https://www.google.com/search?q=x -> www.google.com
+  return raw.trim().replace(/^[a-z]+:\/\//i, "").replace(/[/?#].*$/, "").replace(/:\d+$/, "");
+}
+function resultHtml(r) {
+  const answers = r.answers.length
+    ? `<ul class="answers">${r.answers.map((a) => `<li>${esc(a.data)} <span class="t">${esc(a.type)} · TTL ${a.ttl}s${a.name.replace(/\.$/, "") !== r.name.replace(/\.$/, "") ? " · " + esc(a.name) : ""}</span></li>`).join("")}</ul>`
+    : `<p class="note">No records${r.authority.length ? " (the zone's SOA says the name has none of this type)" : ""}.</p>`;
+  return `<div class="big num">${ms(r.latency_ms)}</div>
+    <dl class="kv">
+      <dt>Result</dt><dd>${rcodeBadge(r.rcode)}</dd>
+      <dt>Served by</dt><dd>${servedBadge(r.served_by)}</dd>
+      <dt>Cache</dt><dd>${r.served_by === "cache" ? "hit: answered from memory" : "miss: looked up"}</dd>
+      <dt>Resolver</dt><dd>${esc(r.via)}</dd>
+    </dl>${answers}`;
+}
+async function lookup() {
+  const name = cleanName($("lk-name").value);
+  if (!name) return;
+  $("lk-name").value = name;
+  const btn = $("lk-go"); btn.disabled = true;
+  try {
+    const q = new URLSearchParams({ name, type: $("lk-type").value, via: $("lk-via").value });
+    $("lk-result").innerHTML = resultHtml(await api("/api/lookup?" + q));
+  } catch (e) { $("lk-result").innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+  btn.disabled = false;
+}
+$("lk-go").onclick = lookup;
+$("lk-name").onkeydown = (e) => { if (e.key === "Enter") lookup(); };
+$("lk-chips").onclick = (e) => { if (e.target.dataset.name) { $("lk-name").value = e.target.dataset.name; lookup(); } };
+
+// ---------- 2. compare ----------
+$("cmp-go").onclick = async () => {
+  const name = cleanName($("cmp-name").value);
+  if (!name || !status) return;
+  const btn = $("cmp-go"); btn.disabled = true;
+  const out = $("cmp-result");
+  out.innerHTML = `<p class="note">Flushing caches…</p>`;
+  const rows = [];
+  try {
+    await api("/api/cache/flush", "POST");
+    const targets = [{ id: "server", label: "This server" }, ...status.labs];
+    for (const t of targets) {
+      out.innerHTML = `<p class="note">Asking ${esc(t.label)}…</p>`;
+      const q = (via) => api("/api/lookup?" + new URLSearchParams({ name, type: "A", via }));
+      const cold = await q(t.id).catch((e) => ({ error: e.message }));
+      const warm = await q(t.id).catch((e) => ({ error: e.message }));
+      rows.push({ label: t.label, cold, warm });
+    }
+    const max = Math.max(1, ...rows.flatMap((r) => [r.cold.latency_ms || 0, r.warm.latency_ms || 0]));
+    const cell = (r) => (r.error ? `<span class="error">${esc(r.error)}</span>` : `${ms(r.latency_ms)}<br><span class="t note">${esc(r.served_by)}</span>`);
+    out.innerHTML = `<div class="legend"><span>First ask (cold cache)</span><span class="warm">Second ask</span></div>
+      <table class="compare"><thead><tr><th>Resolver</th><th>Cold</th><th>Warm</th><th></th></tr></thead><tbody>
+      ${rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="mono">${cell(r.cold)}</td><td class="mono">${cell(r.warm)}</td>
+        <td class="bar-cell" title="cold ${ms(r.cold.latency_ms)}, warm ${ms(r.warm.latency_ms)}">
+          <div class="mini" style="width:${(100 * (r.cold.latency_ms || 0)) / max}%"></div>
+          <div class="mini warm" style="width:${(100 * (r.warm.latency_ms || 0)) / max}%;margin-top:3px"></div></td></tr>`).join("")}
+      </tbody></table>
+      <p class="note">Forwarding asks one big public resolver that has usually cached the name already. Recursive walks root → TLD → authoritative itself, so its cold ask is slowest. The second ask comes from our own cache.</p>`;
+  } catch (e) { out.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+  btn.disabled = false;
+};
+
+// ---------- 3. load ----------
+function countsBars(counts, total, labelMap = (k) => k) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  return `<div class="bars">${entries.map(([k, v]) => `<div class="bar"><span>${esc(labelMap(k))}</span>
+    <div class="track"><div class="fill" style="width:${total ? (100 * v) / total : 0}%"></div></div>
+    <span class="n">${fmt.format(v)}</span></div>`).join("")}</div>`;
+}
+function loadHtml(l) {
+  if (!l || !l.requested) return "";
+  const pct = (100 * l.done) / l.requested;
+  return `<div class="progress"><div style="width:${pct}%"></div></div>
+    <dl class="kv">
+      <dt>Progress</dt><dd class="num">${fmt.format(l.done)} / ${fmt.format(l.requested)} ${l.running ? "(running)" : "(done)"}</dd>
+      <dt>Throughput</dt><dd class="num">${fmt.format(Math.round(l.qps))} queries/s over ${l.elapsed_s.toFixed(1)} s</dd>
+      <dt>Latency</dt><dd class="num">p50 ${ms(l.p50_ms)} · p95 ${ms(l.p95_ms)} · p99 ${ms(l.p99_ms)} · max ${ms(l.max_ms)}</dd>
+    </dl>
+    <label>Where the answers came from</label>${countsBars(l.served_by, l.done)}
+    <label>Results</label>${countsBars(l.rcodes, l.done)}`;
+}
+async function startLoad(count, concurrency, names, out) {
+  const q = new URLSearchParams({ count, concurrency, names });
+  try { await api("/api/load?" + q, "POST"); loadTarget = out; }
+  catch (e) { $(out).innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+let loadTarget = "ld-result";
+$("ld-go").onclick = () => startLoad($("ld-count").value, $("ld-conc").value, $("ld-names").value, "ld-result");
+
+// ---------- 4. flood ----------
+$("fl-go").onclick = async () => {
+  const btn = $("fl-go"); btn.disabled = true;
+  const out = $("fl-result");
+  try {
+    const q = new URLSearchParams({ client: $("fl-client").value.trim(), count: $("fl-count").value });
+    const r = await api("/api/flood?" + q, "POST");
+    const limiterOff = !r.rate_limit_qps;
+    out.innerHTML = `<dl class="kv">
+        <dt>Sent</dt><dd class="num">${fmt.format(r.sent)} in ${ms(r.elapsed_ms)}</dd>
+        <dt>Client blocked</dt><dd>${r.blocked_after ? `<span class="badge critical">yes, for ${(r.block_duration_ms / 1000).toFixed(0)} s</span>` : `<span class="badge good">no</span>`}</dd>
+        <dt>Limits</dt><dd class="num">${limiterOff ? "rate limiter off (rate_limit_qps = 0)" : `${r.rate_limit_qps} q/s, burst ${r.rate_limit_burst}, block after ${r.block_rate_limit_strikes || "∞"} strikes`}</dd>
+      </dl>
+      <label>What the client got</label>${countsBars(r.served_by, r.sent)}
+      <p class="note">${r.blocked_after ? "A blocked client is now disconnected before its TLS handshake. Other clients are unaffected: try the Lookup test." : "Turn on rate_limit_qps and block_rate_limit_strikes in the config to see blocking."}</p>`;
+  } catch (e) { out.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+  btn.disabled = false;
+};
+
+// ---------- 5. faults ----------
+$("ft-rate").oninput = () => ($("ft-rate-v").textContent = $("ft-rate").value + "%");
+$("ft-apply").onclick = async () => {
+  try {
+    const r = await api("/api/faults?fail_rate=" + $("ft-rate").value / 100, "POST");
+    $("ft-result").innerHTML = `<p class="note">Injected failure rate is now <b>${Math.round(r.fail_rate * 100)}%</b>.</p>`;
+  } catch (e) { $("ft-result").innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+};
+$("ft-traffic").onclick = () => startLoad(3000, 50, "popular", "ft-result");
+
+$("flush").onclick = async () => {
+  try { await api("/api/cache/flush", "POST"); } catch (e) { alert(e.message); }
+};
+
+// ---------- metrics ----------
+const history = []; // {t, qps}
+let last = null;
+
+function drawWorkers(workers) {
+  const cls = { closed: "good", "half-open": "warning", open: "critical" };
+  $("workers").innerHTML = workers.map((w) => `<div class="worker">
+      <div class="head">Worker ${w.id} <span class="badge ${cls[w.breaker]}">${w.breaker}</span></div>
+      <div class="line"><span>calls</span><span>${fmt.format(w.total_calls)}</span></div>
+      <div class="line"><span>failures</span><span>${fmt.format(w.total_failures)}</span></div>
+      <div class="line"><span>breaker trips</span><span>${fmt.format(w.breaker_trips)}</span></div>
+      <div class="line"><span>queued</span><span>${fmt.format(w.outstanding)}</span></div>
+      <div class="line"><span>avg latency</span><span>${ms(w.ewma_ms)}</span></div>
+    </div>`).join("");
+}
+
+function onMetrics(m) {
+  if (last) {
+    const dt = (m.time_ms - last.time_ms) / 1000;
+    if (dt > 0) history.push({ t: m.time_ms, qps: Math.max(0, (m.total_replies - last.total_replies) / dt) });
+    while (history.length > 120) history.shift();
+  }
+  last = m;
+  const qps = history.length ? history[history.length - 1].qps : 0;
+  $("t-qps").textContent = fmt.format(Math.round(qps));
+  $("t-received").textContent = fmt.format(m.received);
+  $("t-replies").textContent = fmt.format(m.total_replies) + " answered";
+  // the server keeps a histogram, so percentiles are bucket bounds: "≤ 5 ms"
+  $("t-p50").textContent = m.total_replies ? "≤" + fmtBucket(m.latency.p50_ms) + " ms" : "–";
+  $("t-p99").textContent = m.total_replies ? `p95 ≤${fmtBucket(m.latency.p95_ms)} · p99 ≤${fmtBucket(m.latency.p99_ms)} ms` : "no replies yet";
+  const healthy = m.workers.filter((w) => w.breaker === "closed").length;
+  $("t-workers").textContent = `${healthy}/${m.workers.length}`;
+  $("t-trips").textContent = `${fmt.format(m.workers.reduce((s, w) => s + w.breaker_trips, 0))} breaker trips`;
+  const lookups = m.cache.hits + m.cache.misses;
+  $("t-hit").textContent = lookups ? Math.round((100 * m.cache.hits) / lookups) + "%" : "–";
+  $("t-cache").textContent = `${fmt.format(m.cache.rrsets)} RRsets cached`;
+  $("t-coal").textContent = fmt.format(m.coalesced);
+  $("t-rl").textContent = fmt.format(m.rate_limited);
+  $("t-rl-s").textContent = m.rate_limited ? "refused by the limiter" : "no client over its limit";
+  $("t-to").textContent = fmt.format(m.timeouts);
+  $("t-ov").textContent = `${fmt.format(m.overload)} overloaded`;
+  drawWorkers(m.workers);
+  if (loadTarget) $(loadTarget).innerHTML = loadHtml(m.load);
+  const rc = Object.fromEntries(Object.entries(m.rcodes).filter(([, v]) => v > 0));
+  $("rcodes").innerHTML = Object.keys(rc).length ? countsBars(rc, m.total_replies) : `<p class="note">No replies yet.</p>`;
+  drawCharts();
+}
+const fmtBucket = (v) => (v == null ? "2000+" : fmt.format(Math.round(v)));
+
+// ---------- charts ----------
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+// a round step for 4 gridlines, so the tick labels are whole numbers
+function niceTop(v) {
+  return 4 * niceMax(Math.max(v, 4) / 4);
+}
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const k of [1, 2, 2.5, 5, 10]) if (k * p >= v) return k * p;
+  return 10 * p;
+}
+function svgEl(svg) {
+  const w = svg.clientWidth || 600, h = svg.clientHeight || 190;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  return { w, h };
+}
+function tipAt(chart, html, x, y) {
+  const tip = chart.querySelector(".tip");
+  tip.innerHTML = html; tip.style.display = "block";
+  const cw = chart.clientWidth, tw = tip.offsetWidth;
+  tip.style.left = Math.min(Math.max(0, x + 12), cw - tw) + "px";
+  tip.style.top = Math.max(0, y - 40) + "px";
+}
+function hideTip(chart) { chart.querySelector(".tip").style.display = "none"; }
+
+function drawQps() {
+  const chart = $("qps-chart"), svg = chart.querySelector("svg");
+  const { w, h } = svgEl(svg);
+  const L = 44, R = 10, T = 10, B = 22;
+  const max = niceTop(Math.max(...history.map((d) => d.qps), 0));
+  const n = 120;
+  const x = (i) => L + ((w - L - R) * (i + (n - history.length))) / (n - 1);
+  const y = (v) => T + (h - T - B) * (1 - v / max);
+  let g = "";
+  for (let k = 0; k <= 4; k++) {
+    const v = (max * k) / 4, yy = y(v);
+    g += `<line x1="${L}" x2="${w - R}" y1="${yy}" y2="${yy}" stroke="${css("--grid")}" stroke-width="1"/>`;
+    g += `<text x="${L - 6}" y="${yy + 4}" text-anchor="end">${fmt.format(Math.round(v))}</text>`;
+  }
+  g += `<text x="${L}" y="${h - 4}">−2 min</text><text x="${w - R}" y="${h - 4}" text-anchor="end">now</text>`;
+  if (history.length > 1) {
+    const pts = history.map((d, i) => `${x(i)},${y(d.qps)}`).join(" ");
+    g += `<polygon points="${x(0)},${y(0)} ${pts} ${x(history.length - 1)},${y(0)}" fill="${css("--series-1")}" opacity="0.12"/>`;
+    g += `<polyline points="${pts}" fill="none" stroke="${css("--series-1")}" stroke-width="2" stroke-linejoin="round"/>`;
+  }
+  g += `<line id="qps-cross" x1="0" x2="0" y1="${T}" y2="${h - B}" stroke="${css("--text-muted")}" stroke-dasharray="3 3" visibility="hidden"/>`;
+  g += `<circle id="qps-dot" r="4" fill="${css("--series-1")}" stroke="${css("--surface-1")}" stroke-width="2" visibility="hidden"/>`;
+  g += `<rect x="${L}" y="${T}" width="${w - L - R}" height="${h - T - B}" fill="transparent" id="qps-hit"/>`;
+  svg.innerHTML = g;
+  const hit = svg.querySelector("#qps-hit");
+  hit.onmousemove = (e) => {
+    if (history.length < 1) return;
+    const r = svg.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    let best = 0;
+    history.forEach((d, i) => { if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i; });
+    const d = history[best];
+    const cross = svg.querySelector("#qps-cross"), dot = svg.querySelector("#qps-dot");
+    cross.setAttribute("x1", x(best)); cross.setAttribute("x2", x(best)); cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", x(best)); dot.setAttribute("cy", y(d.qps)); dot.setAttribute("visibility", "visible");
+    tipAt(chart, `<b class="num">${fmt.format(Math.round(d.qps))}</b> answers/s<br><span style="color:var(--text-muted)">${new Date(d.t).toLocaleTimeString()}</span>`, x(best), y(d.qps));
+  };
+  hit.onmouseleave = () => {
+    svg.querySelector("#qps-cross").setAttribute("visibility", "hidden");
+    svg.querySelector("#qps-dot").setAttribute("visibility", "hidden");
+    hideTip(chart);
+  };
+}
+
+function drawLatency() {
+  const chart = $("lat-chart"), svg = chart.querySelector("svg");
+  const { w, h } = svgEl(svg);
+  if (!last) { svg.innerHTML = ""; return; }
+  const buckets = last.latency.buckets;
+  const labels = buckets.map((b) => (b.le_ms == null ? "2s+" : b.le_ms >= 1000 ? b.le_ms / 1000 + "s" : String(b.le_ms)));
+  const L = 44, R = 6, T = 10, B = 34;
+  const max = niceTop(Math.max(...buckets.map((b) => b.count)));
+  const slot = (w - L - R) / buckets.length, bw = Math.max(4, slot - 4);
+  const y = (v) => T + (h - T - B) * (1 - v / max);
+  let g = "";
+  for (let k = 0; k <= 4; k++) {
+    const v = (max * k) / 4, yy = y(v);
+    g += `<line x1="${L}" x2="${w - R}" y1="${yy}" y2="${yy}" stroke="${css("--grid")}"/>`;
+    g += `<text x="${L - 6}" y="${yy + 4}" text-anchor="end">${fmt.format(Math.round(v))}</text>`;
+  }
+  const total = buckets.reduce((s, b) => s + b.count, 0);
+  buckets.forEach((b, i) => {
+    const x0 = L + i * slot + (slot - bw) / 2, y0 = y(b.count), hh = h - B - y0;
+    if (b.count > 0) {
+      const r = Math.min(4, hh, bw / 2);
+      // rounded data end, square at the baseline
+      g += `<path d="M${x0},${h - B} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x0 + bw - r} Q${x0 + bw},${y0} ${x0 + bw},${y0 + r} V${h - B} Z" fill="${css("--series-1")}"/>`;
+    }
+    // every label when there is room, every other one when bars get narrow
+    if (slot >= 30 || i % 2 === 0) g += `<text x="${x0 + bw / 2}" y="${h - B + 14}" text-anchor="middle">${labels[i]}</text>`;
+    g += `<rect x="${L + i * slot}" y="${T}" width="${slot}" height="${h - T - B}" fill="transparent" data-i="${i}"/>`;
+  });
+  g += `<text x="${L + (w - L - R) / 2}" y="${h - 3}" text-anchor="middle">milliseconds to answer (bucket upper bound)</text>`;
+  svg.innerHTML = g;
+  svg.querySelectorAll("rect[data-i]").forEach((r) => {
+    const i = +r.dataset.i, b = buckets[i];
+    const lo = i === 0 ? 0 : buckets[i - 1].le_ms;
+    r.onmousemove = () => tipAt(chart, `<b class="num">${fmt.format(b.count)}</b> replies (${total ? ((100 * b.count) / total).toFixed(1) : 0}%)<br><span style="color:var(--text-muted)">${b.le_ms == null ? "over 2 s" : `${lo}–${b.le_ms} ms`}</span>`, L + i * slot + slot / 2, y(b.count));
+    r.onmouseleave = () => hideTip(chart);
+  });
+}
+function drawCharts() { drawQps(); drawLatency(); }
+window.addEventListener("resize", drawCharts);
+
+// ---------- query feed ----------
+let feedSeq = 0;
+const feedRows = [];
+function feedRow(q) {
+  const t = new Date(q.time_ms).toLocaleTimeString();
+  const ans = q.answers.filter((a) => a.type === "A" || a.type === "AAAA").map((a) => a.data);
+  return `<tr class="new"><td class="mono">${t}</td><td class="mono">${esc(q.client)}<br><span class="t note">${q.transport}</span></td>
+    <td>${esc(q.name)}${ans.length ? `<br><span class="note mono">${esc(ans.slice(0, 2).join(", "))}</span>` : ""}</td>
+    <td>${esc(q.type)}</td><td>${rcodeBadge(q.rcode)}</td><td>${servedBadge(q.served_by)}</td><td class="r">${q.latency_ms.toFixed(1)}</td></tr>`;
+}
+async function pollFeed() {
+  const r = await api("/api/queries?after=" + feedSeq);
+  if (!r.queries.length) return;
+  feedSeq = r.queries[r.queries.length - 1].seq;
+  if ($("feed-pause").checked) return;
+  // load-test and flood traffic never reaches the log, so everything here is a query someone made
+  for (const q of r.queries) feedRows.unshift(feedRow(q));
+  feedRows.length = Math.min(feedRows.length, 100);
+  $("feed").innerHTML = feedRows.join("");
+  $("feed-count").textContent = `last query #${fmt.format(feedSeq)}`;
+}
+
+// ---------- loop ----------
+let failures = 0;
+async function tick() {
+  try {
+    onMetrics(await api("/api/metrics"));
+    await pollFeed();
+    failures = 0;
+    $("conn").textContent = "live";
+    $("conn-dot").className = "dot ok";
+    if (status) $("uptime-pill").textContent = "up " + Math.round((status.uptime_s + (Date.now() - statusAt) / 1000) / 60) + " min";
+  } catch (e) {
+    if (++failures > 1) { $("conn").textContent = "server unreachable"; $("conn-dot").className = "dot bad"; }
+  }
+}
+let statusAt = Date.now();
+(async function init() {
+  try { await loadStatus(); statusAt = Date.now(); } catch (e) { $("conn").textContent = "server unreachable"; }
+  drawCharts();
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

@@ -1,8 +1,11 @@
 #pragma once
+#include<atomic>
 #include<cstdint>
+#include<memory>
 #include<optional>
 #include<random>
 
+#include "backend/Cache.hpp"
 #include "backend/Resolver.hpp"
 #include "mw/config.hpp"
 #include "mw/types.hpp"
@@ -34,7 +37,20 @@ class StubResolver final : public backend::Resolver {
                                  const bool recurse = true) override;
 };
 
-// the one place resolver chains get built. today a stub, later Arnav's backend classes
-ResolverFactory make_factory(const Config& cfg, std::optional<StubOptions> stub = std::nullopt);
+// a switch the admin page flips at run time, so the demo can show the circuit breakers working
+struct FaultInjection {
+  std::atomic<double> fail_rate{0.0}; // chance a lookup is answered SERVFAIL without being tried
+};
+
+// what every worker's chain shares. the caller keeps copies to read cache stats or flip the faults
+struct ResolverShared {
+  std::shared_ptr<backend::Cache> cache = std::make_shared<backend::Cache>();
+  std::shared_ptr<FaultInjection> faults = std::make_shared<FaultInjection>();
+};
+
+// the one place resolver chains get built: the records_file resolver (if set) in front of a forwarding or
+// recursive resolver, all chains sharing one cache. with stub set, every chain is a StubResolver instead.
+// throws std::invalid_argument for an upstream that is not an IP address
+ResolverFactory make_factory(const Config& cfg, std::optional<StubOptions> stub = std::nullopt, ResolverShared shared = {});
 
 } // namespace mw

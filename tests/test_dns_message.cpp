@@ -1,4 +1,4 @@
-#include "mw/dns_message.hpp"
+#include "dns_message.hpp"
 
 #include <gtest/gtest.h>
 
@@ -12,12 +12,12 @@
 #include <utility>
 #include <vector>
 
-using mw::DnsQuery;
-using mw::ParseError;
-using mw::Rcode;
-using mw::RecordType;
-using mw::ResolveResult;
-using mw::ResourceRecord;
+using types::DnsQuery;
+using types::ParseError;
+using types::Rcode;
+using types::RecordType;
+using types::ResolveResult;
+using types::ResourceRecord;
 
 namespace {
 
@@ -76,7 +76,7 @@ namespace {
             return *this;
         }
 
-        std::expected<DnsQuery, ParseError> parse() const { return mw::parse_query(bytes_); }
+        std::expected<DnsQuery, ParseError> parse() const { return types::parse_query(bytes_); }
 
         std::optional<ParseError> parse_error() const {
             const auto result = parse();
@@ -332,7 +332,7 @@ namespace {
     }
 
     ResourceRecord a_record(std::string name = "example.com.") {
-        return ResourceRecord{ std::move(name), RecordType::A, mw::RecordClass::IN, 300, { 93, 184, 215, 14 } };
+        return ResourceRecord{ std::move(name), RecordType::A, types::RecordClass::IN, 300, { 93, 184, 215, 14 } };
     }
 
     ResolveResult answer(std::vector<ResourceRecord> records) {
@@ -355,38 +355,38 @@ TEST(DnsMessageEncode, EncodesAnswerByteForByte) {
                               .u8(184)
                               .u8(215)
                               .u8(14);
-    EXPECT_EQ(mw::encode_response(example_query(), answer({ a_record() })), expected.bytes());
+    EXPECT_EQ(types::encode_response(example_query(), answer({ a_record() })), expected.bytes());
 }
 
 TEST(DnsMessageEncode, CopiesRecursionDesiredAndSetsRecursionAvailable) {
     auto query = example_query();
-    EXPECT_EQ(u16_at(mw::encode_response(query, answer({})), 2), 0x8180);
+    EXPECT_EQ(u16_at(types::encode_response(query, answer({})), 2), 0x8180);
     query.recursion_desired = false;
-    EXPECT_EQ(u16_at(mw::encode_response(query, answer({})), 2), 0x8080);
+    EXPECT_EQ(u16_at(types::encode_response(query, answer({})), 2), 0x8080);
 }
 
 TEST(DnsMessageEncode, PutsRcodeInFlags) {
-    const auto wire = mw::encode_response(example_query(), mw::error_result(Rcode::NXDomain));
+    const auto wire = types::encode_response(example_query(), ResolveResult{ Rcode::NXDomain });
     EXPECT_EQ(u16_at(wire, 2) & 0xF, 3);
     EXPECT_EQ(u16_at(wire, 4), 1);
     EXPECT_EQ(u16_at(wire, 6), 0);
 }
 
 TEST(DnsMessageEncode, CountsAuthorityRecords) {
-    const ResourceRecord soa{ std::string("com."), RecordType::SOA, mw::RecordClass::IN, 900, { 0 } };
-    const auto wire = mw::encode_response(example_query(), ResolveResult{ Rcode::NXDomain, {}, { soa }, {} });
+    const ResourceRecord soa{ std::string("com."), RecordType::SOA, types::RecordClass::IN, 900, { 0 } };
+    const auto wire = types::encode_response(example_query(), ResolveResult{ Rcode::NXDomain, {}, { soa }, {} });
     EXPECT_EQ(u16_at(wire, 6), 0);
     EXPECT_EQ(u16_at(wire, 8), 1);
 }
 
 TEST(DnsMessageEncode, RecordNameWithOrWithoutTrailingDotEncodesTheSame) {
-    EXPECT_EQ(mw::encode_response(example_query(), answer({ a_record("example.com") })),
-              mw::encode_response(example_query(), answer({ a_record("example.com.") })));
+    EXPECT_EQ(types::encode_response(example_query(), answer({ a_record("example.com") })),
+              types::encode_response(example_query(), answer({ a_record("example.com.") })));
 }
 
 TEST(DnsMessageEncode, AddsOptRecordOnlyWhenClientSentEdns) {
-    const auto without = mw::encode_response(example_query(false), answer({ a_record() }));
-    const auto with    = mw::encode_response(example_query(true), answer({ a_record() }));
+    const auto without = types::encode_response(example_query(false), answer({ a_record() }));
+    const auto with    = types::encode_response(example_query(true), answer({ a_record() }));
 
     EXPECT_EQ(without.size(), kExampleAnswerSize);
     EXPECT_EQ(u16_at(without, 10), 0);
@@ -398,7 +398,7 @@ TEST(DnsMessageEncode, AddsOptRecordOnlyWhenClientSentEdns) {
 }
 
 TEST(DnsMessageEncode, PadsToBlockSizeWhenClientPadded) {
-    const auto wire = mw::encode_response(example_query(true, true), answer({ a_record() }));
+    const auto wire = types::encode_response(example_query(true, true), answer({ a_record() }));
     ASSERT_EQ(wire.size(), 468u);
 
     const std::size_t option_offset = kExampleAnswerSize + kOptSize;
@@ -409,7 +409,7 @@ TEST(DnsMessageEncode, PadsToBlockSizeWhenClientPadded) {
 }
 
 TEST(DnsMessageEncode, PadsLargeRepliesToNextBlock) {
-    const auto wire = mw::encode_response(example_query(true, true), answer(std::vector<ResourceRecord>(20, a_record())));
+    const auto wire = types::encode_response(example_query(true, true), answer(std::vector<ResourceRecord>(20, a_record())));
     EXPECT_GT(wire.size(), 468u);
     EXPECT_EQ(wire.size() % 468, 0u);
 }
@@ -419,27 +419,27 @@ TEST(DnsMessageEncode, FallsBackToServFailWhenRecordCannotBeEncoded) {
     // DomainName already rejects bad names, so make the record unencodable with oversized rdata
     auto huge = a_record();
     huge.rdata.assign(70000, 0);
-    EXPECT_EQ(mw::encode_response(example_query(), answer({ huge })), expected.bytes());
+    EXPECT_EQ(types::encode_response(example_query(), answer({ huge })), expected.bytes());
 }
 
 TEST(DnsMessageEncode, EchoesTheQuestionInTheClientsCase) {
     auto query          = example_query();
     query.name          = "ExAmPlE.CoM.";
     const auto expected = Packet().header(0x8180, 1, 0, 0, 0).name("ExAmPlE.CoM").type_class(kTypeA, kClassIn);
-    EXPECT_EQ(mw::encode_response(query, answer({})), expected.bytes());
+    EXPECT_EQ(types::encode_response(query, answer({})), expected.bytes());
 }
 
 TEST(DnsMessageEncode, EncodesAdditionalRecordsBeforeOpt) {
-    const ResourceRecord glue{ std::string("ns.example.com."), RecordType::A, mw::RecordClass::IN, 60, { 192, 0, 2, 1 } };
+    const ResourceRecord glue{ std::string("ns.example.com."), RecordType::A, types::RecordClass::IN, 60, { 192, 0, 2, 1 } };
     const ResolveResult result{ Rcode::NoError, { a_record() }, {}, { glue } };
 
-    const auto without_edns = mw::encode_response(example_query(false), result);
+    const auto without_edns = types::encode_response(example_query(false), result);
     EXPECT_EQ(u16_at(without_edns, 10), 1);
     const auto glue_bytes = Packet().name("ns.example.com").type_class(kTypeA, kClassIn).u16(0).u16(60).u16(4).u8(192).u8(0).u8(2).u8(1).bytes();
     ASSERT_EQ(without_edns.size(), kExampleAnswerSize + glue_bytes.size());
     EXPECT_TRUE(std::equal(glue_bytes.begin(), glue_bytes.end(), without_edns.begin() + kExampleAnswerSize));
 
-    const auto with_edns = mw::encode_response(example_query(true), result);
+    const auto with_edns = types::encode_response(example_query(true), result);
     EXPECT_EQ(u16_at(with_edns, 10), 2);
     ASSERT_EQ(with_edns.size(), kExampleAnswerSize + glue_bytes.size() + kOptSize);
     EXPECT_EQ(u16_at(with_edns, kExampleAnswerSize + glue_bytes.size() + 1), kTypeOpt);
@@ -455,19 +455,19 @@ TEST(DnsMessageEncode, BadVersIsHeaderPlusOpt) {
                               .u8(0) // version we support
                               .u16(0)
                               .u16(0);
-    EXPECT_EQ(mw::encode_bad_version(kId), expected.bytes());
+    EXPECT_EQ(types::encode_bad_version(kId), expected.bytes());
 }
 
 TEST(DnsMessageEncode, EncodeParseErrorPicksTheRightReply) {
-    EXPECT_EQ(mw::encode_parse_error(ParseError{ Rcode::FormErr, kId }), mw::encode_error(kId, Rcode::FormErr));
-    EXPECT_EQ(mw::encode_parse_error(ParseError{ Rcode::NotImp, kId }), mw::encode_error(kId, Rcode::NotImp));
-    EXPECT_EQ(mw::encode_parse_error(ParseError{ Rcode::NoError, kId, true }), mw::encode_bad_version(kId));
-    EXPECT_EQ(mw::encode_parse_error(ParseError{ Rcode::FormErr, std::nullopt }), std::nullopt);
+    EXPECT_EQ(types::encode_parse_error(ParseError{ Rcode::FormErr, kId }), types::encode_error(kId, Rcode::FormErr));
+    EXPECT_EQ(types::encode_parse_error(ParseError{ Rcode::NotImp, kId }), types::encode_error(kId, Rcode::NotImp));
+    EXPECT_EQ(types::encode_parse_error(ParseError{ Rcode::NoError, kId, true }), types::encode_bad_version(kId));
+    EXPECT_EQ(types::encode_parse_error(ParseError{ Rcode::FormErr, std::nullopt }), std::nullopt);
 }
 
 TEST(DnsMessageEncode, EncodeErrorIsBareHeader) {
-    EXPECT_EQ(mw::encode_error(kId, Rcode::FormErr), Packet().header(0x8081, 0, 0, 0, 0).bytes());
-    EXPECT_EQ(u16_at(mw::encode_error(kId, Rcode::NotImp), 2), 0x8084);
+    EXPECT_EQ(types::encode_error(kId, Rcode::FormErr), Packet().header(0x8081, 0, 0, 0, 0).bytes());
+    EXPECT_EQ(u16_at(types::encode_error(kId, Rcode::NotImp), 2), 0x8084);
 }
 
 TEST(DnsMessageEncode, ReplyEchoesParsedQuestion) {
@@ -475,8 +475,114 @@ TEST(DnsMessageEncode, ReplyEchoesParsedQuestion) {
     const auto query          = query_packet.parse();
     ASSERT_TRUE(query.has_value());
 
-    const auto wire  = mw::encode_response(*query, answer({ a_record() }));
+    const auto wire  = types::encode_response(*query, answer({ a_record() }));
     const auto& sent = query_packet.bytes();
     EXPECT_EQ(u16_at(wire, 0), kId);
     EXPECT_TRUE(std::equal(sent.begin() + 12, sent.end(), wire.begin() + 12));
+}
+
+// ---- client side: encode_query / parse_response ----
+
+TEST(DnsMessageUpstream, EncodedQueryParsesBack) {
+    const auto wire  = types::encode_query(kId, types::DomainName("www.example.com."), RecordType::AAAA, types::RecordClass::IN, true);
+    const auto query = types::parse_query(wire);
+    ASSERT_TRUE(query.has_value());
+    EXPECT_EQ(query->id, kId);
+    EXPECT_EQ(query->name, "www.example.com.");
+    EXPECT_EQ(query->type, RecordType::AAAA);
+    EXPECT_TRUE(query->recursion_desired);
+    EXPECT_TRUE(query->has_edns);
+}
+
+TEST(DnsMessageUpstream, QueryWithoutRecursionDesired) {
+    const auto wire = types::encode_query(kId, types::DomainName("example.com."), RecordType::A, types::RecordClass::IN, false);
+    EXPECT_EQ(u16_at(wire, 2), 0x0000);
+}
+
+TEST(DnsMessageUpstream, ResponseRoundTripsThroughEncodeResponse) {
+    const auto query = valid_query().parse();
+    ASSERT_TRUE(query.has_value());
+    const ResourceRecord ns{ std::string("example.com."), RecordType::NS, types::RecordClass::IN, 900,
+                             static_cast<std::vector<uint8_t>>(types::DomainName("ns.example.com.")) };
+    const ResourceRecord glue{ std::string("ns.example.com."), RecordType::A, types::RecordClass::IN, 60, { 192, 0, 2, 1 } };
+    const auto wire = types::encode_response(*query, ResolveResult{ Rcode::NoError, { a_record() }, { ns }, { glue } });
+
+    const auto response = types::parse_response(wire);
+    ASSERT_TRUE(response.has_value());
+    EXPECT_EQ(response->id, kId);
+    EXPECT_TRUE(response->has_question);
+    EXPECT_EQ(response->question, types::DomainName("example.com."));
+    EXPECT_EQ(response->qtype, RecordType::A);
+    EXPECT_FALSE(response->truncated);
+    EXPECT_EQ(response->result.rcode, Rcode::NoError);
+    ASSERT_EQ(response->result.answer.size(), 1u);
+    EXPECT_EQ(response->result.answer[0].rdata, (std::vector<uint8_t>{ 93, 184, 215, 14 }));
+    EXPECT_EQ(response->result.answer[0].ttl, 300u);
+    ASSERT_EQ(response->result.authority.size(), 1u);
+    EXPECT_EQ(response->result.authority[0].rdata, ns.rdata);
+    ASSERT_EQ(response->result.additional.size(), 1u); // the OPT record is left out
+    EXPECT_EQ(response->result.additional[0].name, glue.name);
+}
+
+TEST(DnsMessageUpstream, CompressedNamesInRdataAreExpanded) {
+    // www.example.com CNAME pointing at "cdn" + a pointer back to example.com in the question
+    const auto wire = Packet()
+                          .header(0x8180, 1, 1, 0, 0)
+                          .name("www.example.com")
+                          .type_class(5, kClassIn)
+                          .u16(0xC00C) // owner: the question name
+                          .type_class(5, kClassIn)
+                          .u16(0)
+                          .u16(60)
+                          .u16(6)
+                          .label("cdn")
+                          .u16(0xC010) // -> example.com inside the question
+                          .bytes();
+    const auto response = types::parse_response(wire);
+    ASSERT_TRUE(response.has_value());
+    ASSERT_EQ(response->result.answer.size(), 1u);
+    EXPECT_EQ(response->result.answer[0].name, types::DomainName("www.example.com."));
+    EXPECT_EQ(response->result.answer[0].rdata, static_cast<std::vector<uint8_t>>(types::DomainName("cdn.example.com.")));
+}
+
+TEST(DnsMessageUpstream, QueriesAreNotResponses) {
+    EXPECT_FALSE(types::parse_response(valid_query().bytes()).has_value());
+}
+
+TEST(DnsMessageUpstream, TruncatedReplyKeepsHeaderAndQuestion) {
+    // claims an answer that isn't there: fine, because TC says the rest is missing
+    const auto wire     = Packet().header(0x8380, 1, 1, 0, 0).name("example.com").type_class(kTypeA, kClassIn).bytes();
+    const auto response = types::parse_response(wire);
+    ASSERT_TRUE(response.has_value());
+    EXPECT_TRUE(response->truncated);
+    EXPECT_TRUE(response->result.answer.empty());
+}
+
+TEST(DnsMessageUpstream, RecordRunningPastTheEndIsRejected) {
+    const auto wire = Packet()
+                          .header(0x8180, 1, 1, 0, 0)
+                          .name("example.com")
+                          .type_class(kTypeA, kClassIn)
+                          .u16(0xC00C)
+                          .type_class(kTypeA, kClassIn)
+                          .u16(0)
+                          .u16(60)
+                          .u16(4) // rdlength 4, but only 2 bytes follow
+                          .u8(1)
+                          .u8(2)
+                          .bytes();
+    EXPECT_FALSE(types::parse_response(wire).has_value());
+}
+
+TEST(DnsMessageUpstream, RcodeAndAuthoritativeFlag) {
+    const auto wire     = Packet().header(0x8483, 1, 0, 0, 0).name("nope.example").type_class(kTypeA, kClassIn).bytes();
+    const auto response = types::parse_response(wire);
+    ASSERT_TRUE(response.has_value());
+    EXPECT_EQ(response->result.rcode, Rcode::NXDomain);
+    EXPECT_TRUE(response->authoritative);
+}
+
+TEST(DnsMessageUpstream, CompressionLoopIsRejected) {
+    const auto wire = Packet().header(0x8180, 1, 0, 0, 0).u16(0xC00C).type_class(kTypeA, kClassIn).bytes();
+    EXPECT_FALSE(types::parse_response(wire).has_value());
 }

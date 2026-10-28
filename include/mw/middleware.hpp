@@ -10,6 +10,7 @@
 #include "mw/inflight_table.hpp"
 #include "mw/load_balancer.hpp"
 #include "mw/metrics.hpp"
+#include "mw/query_log.hpp"
 #include "mw/rate_limiter.hpp"
 #include "mw/types.hpp"
 #include "mw/worker.hpp"
@@ -27,6 +28,7 @@ class Middleware {
     const Config config_;
     Clock clock_;
     Metrics metrics_;
+    QueryLog query_log_;
     RateLimiter limiter_;
     BlockList blocklist_;
     InFlightTable inflight_;
@@ -39,7 +41,8 @@ class Middleware {
     // worker threads
     void on_complete(const QueryKey& key, ResolveResult r);
     // caller's thread
-    void reply_now(ResultCallback& cb, Rcode rc) noexcept;
+    void log_replies(std::string_view name, RecordType type, const ClientInfo& client, ResultCallback& cb) noexcept;
+    void reply_now(ResultCallback& cb, Rcode rc, const char* why) noexcept;
 
   public:
     // threads are not started here
@@ -64,6 +67,10 @@ class Middleware {
     void stop(Ms drain_timeout);
 
     MetricsSnapshot metrics_snapshot() const;
+    // for a query the front end answered itself (a blocked domain), so it still shows in the query log
+    void log_reply(std::string_view name, RecordType type, const ClientInfo& client, const ResolveResult& result) noexcept;
+    // replies sent after seq `after`, every path included (rate limited, timed out, ...)
+    std::vector<QueryLogEntry> recent_queries(uint64_t after) const;
     std::vector<WorkerStats> worker_stats() const;
 };
 

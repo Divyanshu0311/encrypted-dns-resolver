@@ -131,10 +131,7 @@ namespace types {
 
     bool DomainName::operator==(const DomainName& name) const noexcept {
         if (absolute != name.absolute) return false;
-        if (labels.size() != name.labels.size()) return false;
-        for (std::size_t i = 0; i < labels.size(); i++)
-            if (utils::lower(labels[i]) != utils::lower(name.labels[i])) return false;
-        return true;
+        return std::ranges::equal(labels, name.labels, {}, utils::lower, utils::lower);
     }
 
     DomainName& DomainName::operator+=(const DomainName& name) {
@@ -143,40 +140,26 @@ namespace types {
         for (const std::string& label : labels) len += label.size();
         for (const std::string& label : name.labels) len += label.size();
         len += labels.size() + name.labels.size();
-        if (len > 254)
-            throw std::runtime_error("DomainName: length overflow after addition");
-        else
-            // insert() rather than append_range(): append_range needs GCC 15
-            labels.insert(labels.end(), name.labels.begin(), name.labels.end());
+        if (len > 254) throw std::runtime_error("DomainName: length overflow after addition");
+        labels.append_range(name.labels);
         absolute = name.absolute;
         return *this;
     }
 
     bool DomainName::is_ancestor_of(const DomainName& name) const noexcept {
         if (absolute != name.absolute) return false;
-        // name ends with our labels (case-insensitive)
-        if (labels.size() > name.labels.size()) return false;
-        return std::equal(labels.begin(), labels.end(), name.labels.end() - labels.size(),
-                          [](const std::string& lhs, const std::string& rhs) { return utils::lower(lhs) == utils::lower(rhs); });
+        return std::ranges::ends_with(name.labels, labels, {}, utils::lower, utils::lower);
     }
 
     bool DomainName::is_descendent_of(const DomainName& name) const noexcept {
         if (absolute != name.absolute) return false;
-        // our labels end with name's labels (case-insensitive)
-        if (name.labels.size() > labels.size()) return false;
-        return std::equal(name.labels.begin(), name.labels.end(), labels.end() - name.labels.size(),
-                          [](const std::string& lhs, const std::string& rhs) { return utils::lower(lhs) == utils::lower(rhs); });
+        return std::ranges::ends_with(labels, name.labels, {}, utils::lower, utils::lower);
     }
 
     DomainName DomainName::parent() const noexcept {
         DomainName parent_name(*this);
         if (!parent_name.labels.empty()) parent_name.labels.erase(parent_name.labels.begin());
         return parent_name;
-    }
-
-    DomainName operator+(DomainName lhs, const DomainName& rhs) {
-        lhs += rhs;
-        return lhs;
     }
 
 } // namespace types

@@ -10,7 +10,7 @@ namespace types {
     {                                                                                                                                                          \
         #name, RecordType::name                                                                                                                                \
     }
-        static std::unordered_map<std::string, RecordType> table = {
+        static const std::unordered_map<std::string, RecordType> table = {
             DNS_E(A),          DNS_E(NS),         DNS_E(MD),     DNS_E(MF),       DNS_E(CNAME),
             DNS_E(SOA),        DNS_E(MB),         DNS_E(MG),     DNS_E(MR),       { "NULL", RecordType::NULL_RR },
             DNS_E(NULL_RR),    DNS_E(WKS),        DNS_E(PTR),    DNS_E(HINFO),    DNS_E(MINFO),

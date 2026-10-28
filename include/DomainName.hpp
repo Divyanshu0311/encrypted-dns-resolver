@@ -36,10 +36,14 @@ namespace types {
 
         bool is_descendent_of(const DomainName& name) const noexcept;
 
-        DomainName parent() const noexcept;
-    };
+        DomainName parent() const;
 
-    DomainName operator+(DomainName lhs, const DomainName& rhs);
+        friend DomainName operator+(const DomainName& lhs, const DomainName& rhs) {
+            auto x = lhs;
+            x += rhs;
+            return x;
+        }
+    };
 
 } // namespace types
 

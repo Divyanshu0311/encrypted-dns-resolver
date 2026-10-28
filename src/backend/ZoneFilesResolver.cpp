@@ -55,8 +55,7 @@ namespace backend {
                 types::DomainName target(record.rdata, offset);
                 for (const types::RecordType t : { types::RecordType::A, types::RecordType::AAAA }) {
                     auto glue = types::find_records(zone, target, t);
-                    // insert() rather than append_range(): append_range needs GCC 15
-                    out.insert(out.end(), glue.begin(), glue.end());
+                    out.append_range(glue);
                 }
             } catch (const std::runtime_error&) {
                 // Malformed rdata: skip glue.

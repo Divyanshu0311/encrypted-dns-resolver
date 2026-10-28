@@ -62,9 +62,7 @@ TEST(DomainName, LabelLengthLimit) {
 TEST(DomainName, TotalLengthLimit) {
     std::string too_long;
     for (int i = 0; i < 100; ++i) too_long += "abc.";
-    // braces, not parentheses: DomainName(too_long) would declare a variable
-    // named too_long instead of constructing one (most vexing parse)
-    EXPECT_THROW(types::DomainName{too_long}, std::runtime_error);
+    EXPECT_THROW(types::DomainName{ too_long }, std::runtime_error);
 }
 
 TEST(DomainName, EscapedDotStaysInsideLabel) {

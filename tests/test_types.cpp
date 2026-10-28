@@ -129,6 +129,12 @@ TEST(ResolverFactory, EachCallReturnsNewInstance) {
 TEST(Transport, Values) {
   static_assert(std::is_same_v<std::underlying_type_t<mw::Transport>, std::uint8_t>);
   EXPECT_SHOW_NE(mw::Transport::Udp, mw::Transport::Tcp);
+  EXPECT_SHOW_NE(mw::Transport::Udp, mw::Transport::Dot);
+  EXPECT_SHOW_NE(mw::Transport::Tcp, mw::Transport::Dot);
+  // new values go at the end so existing ones keep their numbers
+  EXPECT_SHOW_EQ_AS("Udp value", static_cast<int>(mw::Transport::Udp), 0);
+  EXPECT_SHOW_EQ_AS("Tcp value", static_cast<int>(mw::Transport::Tcp), 1);
+  EXPECT_SHOW_EQ_AS("Dot value", static_cast<int>(mw::Transport::Dot), 2);
 }
 
 TEST(LbPolicy, Values) {
@@ -143,6 +149,13 @@ TEST(ClientInfo, Defaults) {
   EXPECT_SHOW_EQ(info.address, "");
   EXPECT_SHOW_EQ(info.port, 0);
   EXPECT_SHOW_EQ(info.transport, mw::Transport::Udp);
+}
+
+TEST(ClientInfo, HoldsADotClient) {
+  const mw::ClientInfo info{"10.0.0.1", 853, mw::Transport::Dot};
+  EXPECT_SHOW_EQ(info.address, "10.0.0.1");
+  EXPECT_SHOW_EQ(info.port, 853);
+  EXPECT_SHOW_EQ(info.transport, mw::Transport::Dot);
 }
 
 TEST(ResultCallback, AcceptsMoveOnlyCallable) {

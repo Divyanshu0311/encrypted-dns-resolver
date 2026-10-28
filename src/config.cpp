@@ -60,6 +60,59 @@ std::expected<double, std::string> non_negative_double(std::string_view key, std
   return *d;
 }
 
+struct HostPort {
+  std::string host;
+  uint16_t port;
+};
+
+// `what` names the value in errors, e.g. "upstream '1.2.3.4:x' has an invalid port"
+std::expected<HostPort, std::string> parse_host_port(std::string_view s, uint16_t default_port, std::string_view what) {
+  s = trim(s);
+  std::string host;
+  std::string_view port_text;
+
+  if (!s.empty() && s.front() == '[') {
+    // [v6]:port
+    auto close = s.find(']');
+    if (close == std::string_view::npos)
+      return std::unexpected(std::format("{} '{}' is missing ']'", what, s));
+    host = std::string(s.substr(1, close - 1));
+    auto rest = s.substr(close + 1);
+    if (!rest.empty()) {
+      if (rest.front() != ':')
+        return std::unexpected(std::format("{} '{}' has junk after ']'", what, s));
+      port_text = rest.substr(1);
+      if (port_text.empty())
+        return std::unexpected(std::format("{} '{}' has an empty port", what, s));
+    }
+  }
+  else if (std::count(s.begin(), s.end(), ':') > 1) {
+    // bare v6, no port possible
+    host = std::string(s);
+  }
+  else {
+    auto colon = s.find(':');
+    host = std::string(s.substr(0, colon));
+    if (colon != std::string_view::npos) {
+      port_text = s.substr(colon + 1);
+      if (port_text.empty())
+        return std::unexpected(std::format("{} '{}' has an empty port", what, s));
+    }
+  }
+
+  if (!is_ip(host))
+    return std::unexpected(std::format("{} '{}' is not an IPv4 or IPv6 address", what, s));
+
+  HostPort result{host, default_port};
+  if (!port_text.empty()) {
+    auto port = parse_number<unsigned>(port_text);
+    if (!port || *port < 1 || *port > 65535)
+      return std::unexpected(std::format("{} '{}' has an invalid port (1-65535)", what, s));
+    result.port = static_cast<uint16_t>(*port);
+  }
+  return result;
+}
+
 std::expected<std::vector<Upstream>, std::string> parse_upstream_list(std::string_view value) {
   std::vector<Upstream> upstreams;
   if (value.empty())
@@ -153,6 +206,36 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
       return std::unexpected(d.error());
     cfg.rate_limit_burst = *d;
   }
+  else if (key == "block_rate_limit_strikes") {
+    auto n = int_in_range(key, value, 0, std::numeric_limits<uint32_t>::max());
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.block_rate_limit_strikes = static_cast<uint32_t>(*n);
+  }
+  else if (key == "block_protocol_strikes") {
+    auto n = int_in_range(key, value, 0, std::numeric_limits<uint32_t>::max());
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.block_protocol_strikes = static_cast<uint32_t>(*n);
+  }
+  else if (key == "block_window_ms") {
+    auto n = int_in_range(key, value, 100, 3600000);
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.block_window = Ms(*n);
+  }
+  else if (key == "block_duration_ms") {
+    auto n = int_in_range(key, value, 1000, 604800000);
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.block_duration = Ms(*n);
+  }
+  else if (key == "block_max_entries") {
+    auto n = int_in_range(key, value, 1, 10000000);
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.block_max_entries = static_cast<std::size_t>(*n);
+  }
   else if (key == "log_level") {
     if (lower == "debug")
       cfg.log_level = LogLevel::Debug;
@@ -165,6 +248,33 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
     else
       return std::unexpected(std::format("log_level must be debug, info, warn or error, got '{}'", value));
   }
+  else if (key == "listen") {
+    auto listen = parse_listen(value);
+    if (!listen)
+      return std::unexpected(listen.error());
+    cfg.listen = std::move(*listen);
+  }
+  else if (key == "tls_cert") {
+    cfg.tls_cert = std::string(value);
+  }
+  else if (key == "tls_key") {
+    cfg.tls_key = std::string(value);
+  }
+  else if (key == "max_connections") {
+    auto n = int_in_range(key, value, 1, 100000);
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.max_connections = static_cast<std::size_t>(*n);
+  }
+  else if (key == "idle_timeout_ms") {
+    auto n = int_in_range(key, value, 1000, 300000);
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.idle_timeout = Ms(*n);
+  }
+  else if (key == "blocked_domains_file") {
+    cfg.blocked_domains_file = std::string(value);
+  }
   else {
     return std::unexpected(std::format("unknown key '{}'", key));
   }
@@ -174,50 +284,17 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
 } // namespace
 
 std::expected<Upstream, std::string> parse_upstream(std::string_view s) {
-  s = trim(s);
-  std::string host;
-  std::string_view port_text;
+  auto hp = parse_host_port(s, 53, "upstream");
+  if (!hp)
+    return std::unexpected(hp.error());
+  return Upstream{std::move(hp->host), hp->port};
+}
 
-  if (!s.empty() && s.front() == '[') {
-    // [v6]:port
-    auto close = s.find(']');
-    if (close == std::string_view::npos)
-      return std::unexpected(std::format("upstream '{}' is missing ']'", s));
-    host = std::string(s.substr(1, close - 1));
-    auto rest = s.substr(close + 1);
-    if (!rest.empty()) {
-      if (rest.front() != ':')
-        return std::unexpected(std::format("upstream '{}' has junk after ']'", s));
-      port_text = rest.substr(1);
-      if (port_text.empty())
-        return std::unexpected(std::format("upstream '{}' has an empty port", s));
-    }
-  }
-  else if (std::count(s.begin(), s.end(), ':') > 1) {
-    // bare v6, no port possible
-    host = std::string(s);
-  }
-  else {
-    auto colon = s.find(':');
-    host = std::string(s.substr(0, colon));
-    if (colon != std::string_view::npos) {
-      port_text = s.substr(colon + 1);
-      if (port_text.empty())
-        return std::unexpected(std::format("upstream '{}' has an empty port", s));
-    }
-  }
-
-  if (!is_ip(host))
-    return std::unexpected(std::format("upstream '{}' is not an IPv4 or IPv6 address", s));
-
-  Upstream upstream{host, 53};
-  if (!port_text.empty()) {
-    auto port = parse_number<unsigned>(port_text);
-    if (!port || *port < 1 || *port > 65535)
-      return std::unexpected(std::format("upstream '{}' has an invalid port (1-65535)", s));
-    upstream.port = static_cast<uint16_t>(*port);
-  }
-  return upstream;
+std::expected<ListenAddress, std::string> parse_listen(std::string_view s) {
+  auto hp = parse_host_port(s, 853, "listen");
+  if (!hp)
+    return std::unexpected(hp.error());
+  return ListenAddress{std::move(hp->host), hp->port};
 }
 
 std::expected<Config, std::string> parse_config(std::string_view text) {
@@ -254,6 +331,11 @@ std::expected<Config, std::string> parse_config(std::string_view text) {
     return std::unexpected("forwarding mode needs at least one upstream");
   if (cfg.rate_limit_qps > 0 && cfg.rate_limit_burst < 1)
     return std::unexpected("rate_limit_burst must be at least 1 when rate_limit_qps > 0");
+  // rate_limit_strikes with qps 0 is fine: the limiter is switched off, so those strikes just never happen
+  if (cfg.block_rate_limit_strikes > 0 && cfg.block_protocol_strikes > 0 && cfg.block_protocol_strikes <= cfg.block_rate_limit_strikes)
+    return std::unexpected("block_protocol_strikes must be greater than block_rate_limit_strikes");
+  if (cfg.tls_cert.empty() != cfg.tls_key.empty())
+    return std::unexpected("tls_cert and tls_key must be set together");
 
   return cfg;
 }
@@ -271,9 +353,17 @@ std::expected<Config, std::string> load_config(const std::filesystem::path& path
   if (!cfg)
     return cfg;
 
-  std::error_code ec;
-  if (!cfg->records_file.empty() && !std::filesystem::exists(cfg->records_file, ec))
-    return std::unexpected(std::format("records_file '{}' does not exist", cfg->records_file.string()));
+  const std::pair<std::string_view, const std::filesystem::path*> files[] = {
+      {"records_file", &cfg->records_file},
+      {"tls_cert", &cfg->tls_cert},
+      {"tls_key", &cfg->tls_key},
+      {"blocked_domains_file", &cfg->blocked_domains_file},
+  };
+  for (const auto& [key, path] : files) {
+    std::error_code ec;
+    if (!path->empty() && !std::filesystem::exists(*path, ec))
+      return std::unexpected(std::format("{} '{}' does not exist", key, path->string()));
+  }
   return cfg;
 }
 

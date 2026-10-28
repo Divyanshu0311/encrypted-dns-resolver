@@ -66,6 +66,19 @@ mw::ClientInfo client(const std::string& address = "10.0.0.1") {
   return mw::ClientInfo{address, 5353, mw::Transport::Udp};
 }
 
+// real time plus a shift the test controls. FakeClock won't do for a running Middleware: the
+// deadline timer checks real time, so deadlines taken from a fake clock could already be past
+class ShiftedClock {
+public:
+  mw::Clock fn() const {
+    return [shift = shift_] { return mw::SteadyClock::now() + mw::Ms(shift->load()); };
+  }
+  void advance(mw::Ms by) { shift_->fetch_add(by.count()); }
+
+private:
+  std::shared_ptr<std::atomic<long long>> shift_ = std::make_shared<std::atomic<long long>>(0);
+};
+
 } // namespace
 
 TEST(Middleware, ResolvesAQuery) {
@@ -302,4 +315,113 @@ TEST(Middleware, EverySubmitGetsExactlyOneCallback) {
   const auto s = m.metrics_snapshot();
   EXPECT_SHOW_EQ(s.received, kThreads * kPerThread + 1);
   EXPECT_SHOW_EQ(s.total_replies, kThreads * kPerThread + 1);
+}
+
+// ---- blocking ----
+
+TEST(Middleware, RateLimitStrikesBlockTheSource) {
+  auto state = std::make_shared<FakeResolver::State>();
+  ShiftedClock clock;
+  auto cfg = test_config();
+  cfg.rate_limit_qps = 1;
+  cfg.rate_limit_burst = 1;
+  cfg.block_rate_limit_strikes = 3;
+  cfg.block_duration = mw::Ms(60000);
+  mw::Middleware m(cfg, FakeResolver::factory(state), clock.fn());
+  m.start();
+
+  Replies replies(6);
+  m.submit("a.test.", mw::RecordType::A, client("10.0.0.1"), replies.cb(0));
+  for (std::size_t i = 1; i <= 3; ++i) {
+    m.submit("a.test.", mw::RecordType::A, client("10.0.0.1"), replies.cb(i));
+    EXPECT_SHOW_EQ(replies.rcodes[i].load(), mw::Rcode::Refused);
+  }
+  EXPECT_SHOW_EQ(m.is_blocked("10.0.0.1"), true);
+
+  // the bucket refills in 10 s, so a refusal now comes from the block, not the limiter
+  clock.advance(mw::Ms(10000));
+  m.submit("a.test.", mw::RecordType::A, client("10.0.0.1"), replies.cb(4));
+  EXPECT_SHOW_EQ(replies.calls[4].load(), 1);
+  EXPECT_SHOW_EQ(replies.rcodes[4].load(), mw::Rcode::Refused);
+  EXPECT_SHOW_EQ_AS("rate_limited (the 5th refusal was the block)", m.metrics_snapshot().rate_limited, 3u);
+
+  m.submit("a.test.", mw::RecordType::A, client("10.0.0.2"), replies.cb(5));
+  ASSERT_TRUE(eventually([&] { return replies.total() == 6; }));
+  EXPECT_SHOW_EQ_AS("another source", replies.rcodes[5].load(), mw::Rcode::NoError);
+}
+
+TEST(Middleware, ReportAbuseBlocksTheSource) {
+  auto state = std::make_shared<FakeResolver::State>();
+  auto cfg = test_config();
+  cfg.block_protocol_strikes = 2;
+  mw::Middleware m(cfg, FakeResolver::factory(state));
+  m.start();
+
+  m.report_abuse("10.0.0.1");
+  EXPECT_SHOW_EQ(m.is_blocked("10.0.0.1"), false);
+  m.report_abuse("10.0.0.1");
+  EXPECT_SHOW_EQ(m.is_blocked("10.0.0.1"), true);
+
+  Replies replies(1);
+  m.submit("a.test.", mw::RecordType::A, client("10.0.0.1"), replies.cb(0));
+  EXPECT_SHOW_EQ_AS("answered inside submit()", replies.calls[0].load(), 1);
+  EXPECT_SHOW_EQ(replies.rcodes[0].load(), mw::Rcode::Refused);
+  EXPECT_SHOW_EQ_AS("resolver never asked", state->calls.load(), 0);
+}
+
+TEST(Middleware, BlockEndsAfterDuration) {
+  auto state = std::make_shared<FakeResolver::State>();
+  ShiftedClock clock;
+  auto cfg = test_config();
+  cfg.block_protocol_strikes = 1;
+  cfg.block_duration = mw::Ms(60000);
+  mw::Middleware m(cfg, FakeResolver::factory(state), clock.fn());
+  m.start();
+
+  m.report_abuse("10.0.0.1");
+  EXPECT_SHOW_EQ(m.is_blocked("10.0.0.1"), true);
+  clock.advance(mw::Ms(60000));
+  EXPECT_SHOW_EQ(m.is_blocked("10.0.0.1"), false);
+
+  Replies replies(1);
+  m.submit("a.test.", mw::RecordType::A, client("10.0.0.1"), replies.cb(0));
+  ASSERT_TRUE(eventually([&] { return replies.total() == 1; }));
+  EXPECT_SHOW_EQ(replies.rcodes[0].load(), mw::Rcode::NoError);
+}
+
+TEST(Middleware, DefaultConfigNeverBlocks) {
+  auto state = std::make_shared<FakeResolver::State>();
+  auto cfg = test_config();
+  cfg.rate_limit_qps = 1;
+  cfg.rate_limit_burst = 1;
+  mw::Middleware m(cfg, FakeResolver::factory(state));
+  m.start();
+
+  Replies replies(20);
+  for (std::size_t i = 0; i < 20; ++i) {
+    m.submit("a.test.", mw::RecordType::A, client("10.0.0.1"), replies.cb(i));
+  }
+  for (int i = 0; i < 100; ++i) {
+    m.report_abuse("10.0.0.1");
+  }
+  EXPECT_SHOW_EQ(m.is_blocked("10.0.0.1"), false);
+  ASSERT_TRUE(eventually([&] { return replies.total() == 20; }));
+}
+
+TEST(Middleware, BlockingIgnoresNonAddresses) {
+  auto state = std::make_shared<FakeResolver::State>();
+  auto cfg = test_config();
+  cfg.block_protocol_strikes = 1;
+  mw::Middleware m(cfg, FakeResolver::factory(state));
+  m.start();
+
+  m.report_abuse("garbage");
+  m.report_abuse("");
+  EXPECT_SHOW_EQ(m.is_blocked("garbage"), false);
+  EXPECT_SHOW_EQ(m.is_blocked(""), false);
+
+  Replies replies(1);
+  m.submit("a.test.", mw::RecordType::A, client("not-an-ip"), replies.cb(0));
+  ASSERT_TRUE(eventually([&] { return replies.total() == 1; }));
+  EXPECT_SHOW_EQ(replies.rcodes[0].load(), mw::Rcode::NoError);
 }

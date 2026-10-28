@@ -9,15 +9,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_TESTING "Build the unit tests" ON)
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # Everything except main.cpp, so the tests can reuse it without a second main()
 set(DNS_LIB_SOURCES
+    src/admission.cpp
     src/backend/Cache.cpp
     src/backend/ForwardingResolver.cpp
     src/backend/HostsFileResolver.cpp
     src/backend/RecursiveResolver.cpp
     src/backend/ZoneFile.cpp
     src/backend/ZoneFilesResolver.cpp
+    src/block_list.cpp
     src/config.cpp
     src/deadline_timer.cpp
     src/dns_message.cpp
@@ -33,14 +36,20 @@ set(DNS_LIB_SOURCES
     src/Records.cpp
     src/resolver_factory.cpp
     src/responder.cpp
+    src/tls_context.cpp
     src/worker.cpp
 )
+
+# The DNS-over-TLS server loop uses epoll and eventfd, which only Linux has
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND DNS_LIB_SOURCES src/dot_server.cpp)
+endif()
 
 # Compiled once, linked into both the server and the tests (no archive/library produced)
 add_library(dns_objs OBJECT ${DNS_LIB_SOURCES})
 target_include_directories(dns_objs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(dns_objs PUBLIC cxx_std_23)
-target_link_libraries(dns_objs PUBLIC Threads::Threads)
+target_link_libraries(dns_objs PUBLIC Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
 
 # inet_pton / inet_ntop come from Winsock on Windows
 if(WIN32)
@@ -81,6 +90,8 @@ if(BUILD_TESTING)
 
     add_executable(dns_tests
         tests/main.cpp
+        tests/test_admission.cpp
+        tests/test_block_list.cpp
         tests/test_bounded_queue.cpp
         tests/test_config.cpp
         tests/test_deadline_timer.cpp
@@ -97,11 +108,15 @@ if(BUILD_TESTING)
         tests/test_records.cpp
         tests/test_resolver_factory.cpp
         tests/test_responder.cpp
+        tests/test_tls_context.cpp
         tests/test_types.cpp
         tests/test_worker.cpp
         tests/test_zonefile.cpp
         tests/test_zonefilesresolver.cpp
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(dns_tests PRIVATE tests/test_dot_server.cpp)
+    endif()
     # tests/ on the include path so "support/*.hpp" resolve
     target_include_directories(dns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     # Plain gtest, not gtest_main: tests/main.cpp provides main()

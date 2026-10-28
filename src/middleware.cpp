@@ -25,10 +25,29 @@ std::optional<DomainName> to_key_name(std::string_view name) {
   }
 }
 
+BlockPolicy block_policy(const Config& c) {
+  return BlockPolicy{.rate_limit_strikes = c.block_rate_limit_strikes,
+                     .protocol_strikes = c.block_protocol_strikes,
+                     .window = c.block_window,
+                     .duration = c.block_duration,
+                     .max_entries = c.block_max_entries};
+}
+
+// fails open: a strike lost to an exception simply doesn't count
+void strike_and_log(BlockList& list, std::string_view ip, Offence offence, Ms duration) noexcept {
+  try {
+    if (list.strike(ip, offence))
+      warn("blocking {} for {} ms: too many {}", ip, duration.count(), offence == Offence::RateLimited ? "rate-limited queries" : "protocol errors");
+  }
+  catch (...) {
+  }
+}
+
 } // namespace
 
 Middleware::Middleware(Config config, ResolverFactory factory, Clock clock)
-    : config_(std::move(config)), clock_(std::move(clock)), limiter_(config_.rate_limit_qps, config_.rate_limit_burst, clock_), timer_(metrics_) {
+    : config_(std::move(config)), clock_(std::move(clock)), limiter_(config_.rate_limit_qps, config_.rate_limit_burst, clock_),
+      blocklist_(block_policy(config_), clock_), timer_(metrics_) {
   set_log_level(config_.log_level);
 
   WorkerTuning tuning;
@@ -58,6 +77,8 @@ void Middleware::start() {
   for (auto& w : workers_)
     w->start();
   info("middleware started with {} workers", workers_.size());
+  if (config_.block_rate_limit_strikes > 0 && !limiter_.enabled())
+    info("rate limiter is off, so rate-limit blocking stays inactive until rate_limit_qps > 0");
 }
 
 void Middleware::submit(std::string_view name, RecordType type, ClientInfo client, ResultCallback cb) noexcept {
@@ -71,8 +92,14 @@ void Middleware::submit(std::string_view name, RecordType type, ClientInfo clien
       reply_now(cb, Rcode::ServFail);
       return;
     }
+    // the front end should have dropped a blocked source already; this covers callers that didn't
+    if (is_blocked(client.address)) {
+      reply_now(cb, Rcode::Refused);
+      return;
+    }
     if (!limiter_.allow(client.address)) {
       metrics_.on_rate_limited();
+      strike_and_log(blocklist_, client.address, Offence::RateLimited, config_.block_duration);
       reply_now(cb, Rcode::Refused);
       return;
     }
@@ -127,6 +154,19 @@ void Middleware::stop(Ms drain_timeout) {
   for (auto& r : inflight_.take_all())
     r->fail(Rcode::ServFail);
   timer_.stop();
+}
+
+bool Middleware::is_blocked(std::string_view ip) const noexcept {
+  try {
+    return blocklist_.is_blocked(ip);
+  }
+  catch (...) {
+    return false;
+  }
+}
+
+void Middleware::report_abuse(std::string_view ip) noexcept {
+  strike_and_log(blocklist_, ip, Offence::Protocol, config_.block_duration);
 }
 
 MetricsSnapshot Middleware::metrics_snapshot() const {

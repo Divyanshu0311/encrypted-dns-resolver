@@ -4,6 +4,7 @@
 #include<string_view>
 #include<vector>
 
+#include "mw/block_list.hpp"
 #include "mw/config.hpp"
 #include "mw/deadline_timer.hpp"
 #include "mw/inflight_table.hpp"
@@ -27,6 +28,7 @@ class Middleware {
     Clock clock_;
     Metrics metrics_;
     RateLimiter limiter_;
+    BlockList blocklist_;
     InFlightTable inflight_;
     DeadlineTimer timer_;
     std::vector<std::unique_ptr<Worker>> workers_;
@@ -51,6 +53,12 @@ class Middleware {
 
     // never blocks, never throws. cb runs exactly once
     void submit(std::string_view name, RecordType type, ClientInfo client, ResultCallback cb) noexcept;
+
+    // for the front end: check at accept(), before the TLS handshake, and again per query.
+    // both fail open, so a broken block list never locks every client out
+    bool is_blocked(std::string_view ip) const noexcept;
+    // a bad frame, failed TLS handshake or malformed query from ip
+    void report_abuse(std::string_view ip) noexcept;
 
     // idempotent. waits up to drain_timeout for in-flight lookups, then fails the rest
     void stop(Ms drain_timeout);

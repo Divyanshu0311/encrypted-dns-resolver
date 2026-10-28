@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "mw/block_list.hpp"
 #include "mw/dns_message.hpp"
 #include "mw/dot_framer.hpp"
 #include "mw/logger.hpp"
@@ -115,11 +116,13 @@ namespace mw {
             int fd      = -1;
             SSL* ssl    = nullptr;
             Peer peer;
+            std::string source; // what max_connections_per_source counts: BlockList::key_for(peer.address)
             bool handshaken = false;
             DotFramer framer;
             std::vector<std::byte> unsent; // framed answers waiting for the socket
             std::size_t pending = 0;       // queries the middleware has not answered yet
-            TimePoint last_active;
+            TimePoint last_active;         // accept, handshake done, a whole message in, or an answer out
+            TimePoint last_sent;           // while unsent is not empty: when bytes last went out
             uint32_t interest      = 0;
             bool wants_write_event = false; // some TLS call returned WANT_WRITE
             bool write_wants_read  = false; // SSL_write needs to read first
@@ -141,8 +144,11 @@ namespace mw {
         uint16_t bound_port              = 0;
         std::shared_ptr<Mailbox> mailbox = std::make_shared<Mailbox>();
         std::unordered_map<uint64_t, std::unique_ptr<Connection>> connections;
+        std::unordered_map<std::string, std::size_t> per_source; // open connections per Connection::source
         uint64_t next_id = kFirstConnectionId;
         TimePoint accept_paused_until{};
+        TimePoint next_idle_scan{};
+        Ms grace{ 0 }; // set by stop() before stopping, read by the I/O thread after it
         std::atomic<bool> stopping{ false };
         std::atomic<std::size_t> count{ 0 };
         std::thread thread;
@@ -155,12 +161,14 @@ namespace mw {
         void service(Connection& c, TimePoint now);
         void handshake(Connection& c, TimePoint now);
         void read_frames(Connection& c, TimePoint now);
-        void handle_message(Connection& c, std::span<const std::byte> message);
-        void queue_reply(Connection& c, const std::vector<std::byte>& wire);
+        void handle_message(Connection& c, std::span<const std::byte> message, TimePoint now);
+        void queue_reply(Connection& c, const std::vector<std::byte>& wire, TimePoint now);
         void flush(Connection& c, TimePoint now);
         void update_interest(Connection& c);
         void deliver_replies(TimePoint now);
         void close_idle(TimePoint now);
+        void stop_accepting();
+        bool drained(TimePoint now, TimePoint deadline);
         void finish(uint64_t id);
         void close_fds();
     };
@@ -217,8 +225,11 @@ namespace mw {
         getsockname(listen_fd, reinterpret_cast<sockaddr*>(&bound), &bound_len);
         bound_port = peer_of(bound).port;
 
-        epoll_fd         = epoll_create1(EPOLL_CLOEXEC);
-        mailbox->wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+        epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+        // kept across stop() and start(): late callbacks from the last run may still hold the mailbox
+        if (mailbox->wake_fd < 0) {
+            mailbox->wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+        }
         if (epoll_fd < 0 || mailbox->wake_fd < 0) {
             return fail("cannot create epoll/eventfd");
         }
@@ -243,7 +254,8 @@ namespace mw {
 
     void DotServer::Impl::run() {
         std::array<epoll_event, 64> events;
-        while (!stopping.load()) {
+        TimePoint drain_deadline{};
+        while (true) {
             const int n = epoll_wait(epoll_fd, events.data(), static_cast<int>(events.size()), kTickMs);
             if (n < 0 && errno != EINTR) {
                 error("epoll_wait failed: {}", std::strerror(errno));
@@ -276,11 +288,23 @@ namespace mw {
                     update_interest(c);
                 }
             }
-            close_idle(now);
+            if (now >= next_idle_scan) {
+                close_idle(now);
+                next_idle_scan = now + Ms(kTickMs);
+            }
             if (accept_paused_until != TimePoint{} && now >= accept_paused_until) {
                 accept_paused_until = {};
                 epoll_event listen_event{ EPOLLIN, { .u64 = kListenTag } };
                 epoll_ctl(epoll_fd, EPOLL_CTL_MOD, listen_fd, &listen_event);
+            }
+            if (stopping.load()) {
+                if (drain_deadline == TimePoint{}) {
+                    stop_accepting();
+                    drain_deadline = now + grace;
+                }
+                if (drained(now, drain_deadline)) {
+                    break;
+                }
             }
         }
 
@@ -324,6 +348,14 @@ namespace mw {
                 close(fd);
                 continue;
             }
+            // without this one host could hold every slot and lock everyone else out
+            std::string source = BlockList::key_for(peer.address).value_or(peer.address);
+            if (const auto it = per_source.find(source); opts.max_connections_per_source > 0 && it != per_source.end() &&
+                                                         it->second >= opts.max_connections_per_source) {
+                debug("max_connections_per_source ({}) reached, closing {}", opts.max_connections_per_source, peer.address);
+                close(fd);
+                continue;
+            }
 
             const int one = 1;
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one); // answers are small and latency matters
@@ -338,6 +370,7 @@ namespace mw {
             c->fd          = fd;
             c->ssl         = ssl;
             c->peer        = std::move(peer);
+            c->source      = std::move(source);
             c->last_active = now;
             c->interest    = EPOLLIN;
             epoll_event event{ EPOLLIN, { .u64 = c->id } };
@@ -345,6 +378,7 @@ namespace mw {
                 close(fd);
                 continue;
             }
+            ++per_source[c->source];
             connections.emplace(c->id, std::move(c));
             count.store(connections.size());
         }
@@ -381,8 +415,15 @@ namespace mw {
             c.wants_write_event = true;
             return;
         }
+        // a client that just goes away (a TCP health check, a port scan, one that rejects our certificate with
+        // an alert) gets no strike; one that sends something that isn't TLS, or TLS we won't speak, does
+        const int reason   = err == SSL_ERROR_SSL ? ERR_GET_REASON(ERR_peek_error()) : 0;
+        const bool gave_up = err == SSL_ERROR_SYSCALL || err == SSL_ERROR_ZERO_RETURN || reason == SSL_R_UNEXPECTED_EOF_WHILE_READING ||
+                             reason >= SSL_AD_REASON_OFFSET;
         debug("TLS handshake with {} failed: {}", c.peer.address, openssl_errors());
-        middleware.report_abuse(c.peer.address);
+        if (!gave_up) {
+            middleware.report_abuse(c.peer.address);
+        }
         c.ending = Ending::Close;
     }
 
@@ -402,7 +443,8 @@ namespace mw {
                     c.ending = Ending::Close;
                     return;
                 }
-                handle_message(c, message);
+                c.last_active = now; // only whole messages count, so trickling bytes can't hold a connection open
+                handle_message(c, message, now);
             }
             if (c.ending != Ending::None || c.pending >= opts.max_pending_per_connection) {
                 return; // paused: update_interest stops watching for input until answers go out
@@ -412,7 +454,6 @@ namespace mw {
             const int n = SSL_read(c.ssl, buf.data(), static_cast<int>(buf.size()));
             if (n > 0) {
                 c.framer.feed(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(n)));
-                c.last_active = now;
                 continue;
             }
             const int err = SSL_get_error(c.ssl, n);
@@ -429,7 +470,7 @@ namespace mw {
         }
     }
 
-    void DotServer::Impl::handle_message(Connection& c, std::span<const std::byte> message) {
+    void DotServer::Impl::handle_message(Connection& c, std::span<const std::byte> message, TimePoint now) {
         // the source may have been blocked since it connected
         if (middleware.is_blocked(c.peer.address)) {
             debug("dropping {}: blocked mid-connection", c.peer.address);
@@ -449,12 +490,12 @@ namespace mw {
             if (!e.bad_edns_version && e.rcode == Rcode::FormErr) {
                 middleware.report_abuse(c.peer.address);
             }
-            queue_reply(c, *reply);
+            queue_reply(c, *reply, now);
             return;
         }
 
         if (admission.refuses(*parsed)) {
-            queue_reply(c, encode_response(*parsed, error_result(Rcode::Refused)));
+            queue_reply(c, encode_response(*parsed, error_result(Rcode::Refused)), now);
             return;
         }
 
@@ -464,10 +505,13 @@ namespace mw {
                           [mailbox = mailbox, id = c.id, query = *parsed](ResolveResult result) { mailbox->post(id, encode_response(query, result)); });
     }
 
-    void DotServer::Impl::queue_reply(Connection& c, const std::vector<std::byte>& wire) {
+    void DotServer::Impl::queue_reply(Connection& c, const std::vector<std::byte>& wire, TimePoint now) {
         const auto framed = frame(wire);
         if (!framed) {
             return; // the encoder never produces more than 65535 bytes
+        }
+        if (c.unsent.empty()) {
+            c.last_sent = now; // the stall clock starts when something is first left waiting
         }
         c.unsent.insert(c.unsent.end(), framed->begin(), framed->end());
         if (c.unsent.size() > opts.max_unsent_bytes) {
@@ -484,6 +528,7 @@ namespace mw {
             if (n > 0) {
                 c.unsent.erase(c.unsent.begin(), c.unsent.begin() + n);
                 c.last_active = now;
+                c.last_sent   = now;
                 continue;
             }
             const int err = SSL_get_error(c.ssl, n);
@@ -527,7 +572,7 @@ namespace mw {
             if (c.pending > 0) {
                 --c.pending;
             }
-            queue_reply(c, wire);
+            queue_reply(c, wire, now);
             if (std::find(touched.begin(), touched.end(), id) == touched.end()) {
                 touched.push_back(id);
             }
@@ -546,18 +591,50 @@ namespace mw {
     }
 
     void DotServer::Impl::close_idle(TimePoint now) {
-        std::vector<uint64_t> idle;
+        std::vector<std::pair<uint64_t, Ending>> expired;
         for (const auto& [id, c] : connections) {
-            if (c->pending == 0 && c->unsent.empty() && now - c->last_active >= opts.idle_timeout) {
-                idle.push_back(id);
+            if (!c->unsent.empty()) {
+                // answers are waiting but the client hasn't read any of them for a whole timeout
+                if (now - c->last_sent >= opts.idle_timeout) {
+                    expired.emplace_back(id, Ending::Reset);
+                }
+            } else if (c->pending == 0 && now - c->last_active >= opts.idle_timeout) {
+                expired.emplace_back(id, Ending::CloseNotify);
             }
         }
-        for (uint64_t id : idle) {
+        for (const auto& [id, ending] : expired) {
             Connection& c = *connections.at(id);
-            debug("closing idle connection from {}", c.peer.address);
-            c.ending = Ending::CloseNotify;
+            if (ending == Ending::Reset) {
+                debug("{} stopped reading its answers, resetting", c.peer.address);
+            } else {
+                debug("closing idle connection from {}", c.peer.address);
+            }
+            c.ending = ending;
             finish(id);
         }
+    }
+
+    // new clients are refused by the kernel from here on, instead of waiting in the backlog
+    void DotServer::Impl::stop_accepting() {
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, listen_fd, nullptr);
+        close(listen_fd);
+        listen_fd           = -1;
+        accept_paused_until = {};
+    }
+
+    // closes the connections with nothing left to answer or send; true once none are left or the grace period is over
+    bool DotServer::Impl::drained(TimePoint now, TimePoint deadline) {
+        std::vector<uint64_t> done;
+        for (const auto& [id, c] : connections) {
+            if (c->pending == 0 && c->unsent.empty()) {
+                done.push_back(id);
+            }
+        }
+        for (uint64_t id : done) {
+            connections.at(id)->ending = Ending::CloseNotify;
+            finish(id);
+        }
+        return connections.empty() || now >= deadline;
     }
 
     void DotServer::Impl::finish(uint64_t id) {
@@ -576,16 +653,20 @@ namespace mw {
             }
             close(c.fd);
         }
+        if (const auto s = per_source.find(c.source); s != per_source.end() && --s->second == 0) {
+            per_source.erase(s);
+        }
         connections.erase(it);
         count.store(connections.size());
     }
 
     DotServerOptions dot_server_options(const Config& cfg) {
         DotServerOptions opts;
-        opts.host            = cfg.listen.host;
-        opts.port            = cfg.listen.port;
-        opts.max_connections = cfg.max_connections;
-        opts.idle_timeout    = cfg.idle_timeout;
+        opts.host                       = cfg.listen.host;
+        opts.port                       = cfg.listen.port;
+        opts.max_connections            = cfg.max_connections;
+        opts.max_connections_per_source = cfg.max_connections_per_source;
+        opts.idle_timeout               = cfg.idle_timeout;
         return opts;
     }
 
@@ -608,14 +689,16 @@ namespace mw {
         return {};
     }
 
-    void DotServer::stop() {
+    void DotServer::stop(Ms grace) {
         if (!impl_->thread.joinable()) {
             return;
         }
+        impl_->grace = grace;
         impl_->stopping.store(true);
         impl_->mailbox->wake();
         impl_->thread.join();
         impl_->close_fds();
+        impl_->stopping.store(false); // so start() can run it again
     }
 
     uint16_t DotServer::port() const noexcept {

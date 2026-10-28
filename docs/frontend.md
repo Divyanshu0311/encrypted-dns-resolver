@@ -96,9 +96,9 @@ connection is reset at its next query. Blocks expire on their own.
 | Counts as a strike | Doesn't count |
 |---|---|
 | Being refused by the rate limiter (*rate-limit strike*) | Asking for a blocked domain |
-| A failed TLS handshake (*protocol strike*) | An unsupported query (NOTIMP) or EDNS version (BADVERS) |
+| A failed TLS handshake: not TLS, or a version we refuse (*protocol strike*) | An unsupported query (NOTIMP) or EDNS version (BADVERS) |
 | A zero-length message, one with no readable ID, or a reply instead of a query (*protocol strike*) | Going quiet until the idle timeout |
-| A malformed query, FORMERR (*protocol strike*) | |
+| A malformed query, FORMERR (*protocol strike*) | Hanging up mid-handshake, or rejecting our certificate with an alert |
 
 Protocol strikes have their own, **higher** limit, because honest clients occasionally fail a
 handshake or send something odd. IPv6 clients are counted per /64 network, since one device
@@ -111,7 +111,9 @@ usually owns a whole /64. A client reaching us as `::ffff:1.2.3.4` is the same c
 | Limit | Default | What happens |
 |---|---|---|
 | Connections at once | 1000 | Extra connections are closed straight away |
-| Idle connection | 10 s | Closed; also covers a client that never finishes its handshake. A connection still waiting for an answer is never idle |
+| Connections from one source | 32 | Extra connections are closed straight away. IPv4 per address, IPv6 per /64 |
+| Idle connection | 10 s | Closed; also covers a client that never finishes its handshake or a message. Only whole queries count as activity, not stray bytes. A connection still waiting for an answer is never idle |
+| Answers left unread | 10 s | A client that reads none of its waiting answers for the idle timeout is reset |
 | Queries waiting per connection | 100 | The server stops reading from that client until answers go out |
 | Unsent answers per connection | 256 KiB | A client that stops reading its answers is closed |
 | Clients tracked for strikes | 100,000 | When full, new clients aren't tracked; existing blocks always stay |
@@ -157,7 +159,8 @@ These keys go in the same config file as the middleware's (see `config/middlewar
 | `listen` | `0.0.0.0:853` | Address and port; `[::]:853` also accepts IPv4 |
 | `tls_cert`, `tls_key` | none | Certificate chain and private key (PEM). Both are required to run the server |
 | `max_connections` | 1000 | Connections at once |
-| `idle_timeout_ms` | 10000 | Idle time before a connection is closed |
+| `max_connections_per_source` | 32 | Connections from one IPv4 address or IPv6 /64; 0 means no limit |
+| `idle_timeout_ms` | 10000 | Idle time before a connection is closed, and how long answers may sit unread |
 | `blocked_domains_file` | none | One domain per line, `#` comments allowed. A domain also blocks everything under it, so a lone `.` refuses every query |
 | `block_rate_limit_strikes` | 0 (off) | Rate-limit strikes before a block |
 | `block_protocol_strikes` | 0 (off) | Protocol strikes before a block; must be higher than the rate-limit one |

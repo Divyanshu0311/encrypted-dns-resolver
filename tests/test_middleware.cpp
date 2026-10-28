@@ -337,6 +337,8 @@ TEST(Middleware, RateLimitStrikesBlockTheSource) {
     EXPECT_SHOW_EQ(replies.rcodes[i].load(), mw::Rcode::Refused);
   }
   EXPECT_SHOW_EQ(m.is_blocked("10.0.0.1"), true);
+  // the clock jump below would otherwise time out this lookup, and reply 5 coalesces onto it
+  ASSERT_TRUE(eventually([&] { return replies.calls[0].load() == 1; }));
 
   // the bucket refills in 10 s, so a refusal now comes from the block, not the limiter
   clock.advance(mw::Ms(10000));

@@ -14,10 +14,13 @@
 namespace mw {
 
     struct DotServerOptions {
-        std::string host            = "0.0.0.0";
-        uint16_t port               = 853; // 0 picks a free port
-        std::size_t max_connections = 1000;
-        Ms idle_timeout{ 10000 };                            // only while nothing is outstanding; covers the handshake too
+        std::string host                       = "0.0.0.0";
+        uint16_t port                          = 853; // 0 picks a free port
+        std::size_t max_connections            = 1000;
+        std::size_t max_connections_per_source = 32; // IPv4 per address, IPv6 per /64. 0 means no limit
+        // only while nothing is outstanding; covers the handshake and a half-sent message too.
+        // also how long queued answers may sit without the client reading any of them
+        Ms idle_timeout{ 10000 };
         std::size_t max_pending_per_connection = 100;        // at the cap, reading pauses until answers go out
         std::size_t max_unsent_bytes           = 256 * 1024; // a client that stops reading its answers is closed
     };
@@ -36,8 +39,8 @@ namespace mw {
 
         // binds, listens and starts the I/O thread. ignores SIGPIPE for the whole process
         std::expected<void, std::string> start();
-        // idempotent; closes every connection
-        void stop();
+        // idempotent. stops accepting, gives outstanding answers up to grace to go out, then closes every connection
+        void stop(Ms grace = Ms(0));
 
         uint16_t port() const noexcept; // the bound port, useful when options.port is 0
         std::size_t connection_count() const noexcept;

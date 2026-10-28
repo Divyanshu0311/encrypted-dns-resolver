@@ -5,17 +5,22 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <format>
 #include <fstream>
+#include <random>
 #include <string>
 
 namespace support {
-    // Per-test scratch directory, removed on destruction.
+    // Per-test scratch directory, removed on destruction. The random suffix keeps test processes running at the
+    // same time (two builds, or ctest from two shells) out of each other's files.
     class TempDir {
     public:
         TempDir() {
             const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
             std::string name = std::string("dns_test_") + (info ? info->test_suite_name() : "none") + "_" + (info ? info->name() : "none");
             std::replace(name.begin(), name.end(), '/', '_'); // parameterized test names contain '/'
+            std::random_device random;
+            name += std::format("_{:08x}{:08x}", random(), random());
             root_ = std::filesystem::temp_directory_path() / name;
             std::error_code ec;
             std::filesystem::remove_all(root_, ec);

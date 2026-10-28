@@ -53,7 +53,8 @@ namespace {
         int sig = 0;
         sigwait(&signals, &sig);
         mw::info("{} received, shutting down", sig == SIGINT ? "SIGINT" : "SIGTERM");
-        server.stop();
+        // stop accepting and let answers already being looked up go out, then fail whatever is left
+        server.stop(mw::Ms(2000));
         middleware.stop(mw::Ms(2000));
         return 0;
     }

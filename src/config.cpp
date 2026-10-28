@@ -266,6 +266,12 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
       return std::unexpected(n.error());
     cfg.max_connections = static_cast<std::size_t>(*n);
   }
+  else if (key == "max_connections_per_source") {
+    auto n = int_in_range(key, value, 0, 100000);
+    if (!n)
+      return std::unexpected(n.error());
+    cfg.max_connections_per_source = static_cast<std::size_t>(*n);
+  }
   else if (key == "idle_timeout_ms") {
     auto n = int_in_range(key, value, 1000, 300000);
     if (!n)

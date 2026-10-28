@@ -57,6 +57,7 @@ struct Config {
   std::filesystem::path tls_cert;          // both or neither
   std::filesystem::path tls_key;
   std::size_t max_connections = 1000;      // 1-100000
+  std::size_t max_connections_per_source = 32; // 0-100000, 0 means no limit. IPv4 per address, IPv6 per /64
   Ms idle_timeout{10000};                  // 1000-300000
   std::filesystem::path blocked_domains_file; // empty means no domain blocking
 };

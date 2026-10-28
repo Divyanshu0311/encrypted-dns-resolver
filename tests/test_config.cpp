@@ -210,6 +210,7 @@ TEST(ParseConfig, BlockAndFrontEndDefaults) {
   EXPECT_SHOW_EQ(cfg->tls_cert.empty(), true);
   EXPECT_SHOW_EQ(cfg->tls_key.empty(), true);
   EXPECT_SHOW_EQ(cfg->max_connections, 1000u);
+  EXPECT_SHOW_EQ(cfg->max_connections_per_source, 32u);
   EXPECT_SHOW_EQ(cfg->idle_timeout.count(), 10000);
   EXPECT_SHOW_EQ(cfg->blocked_domains_file.empty(), true);
 }
@@ -228,6 +229,7 @@ listen = [::]:8853
 tls_cert = certs/server.pem
 tls_key = certs/server.key
 max_connections = 250
+max_connections_per_source = 8
 idle_timeout_ms = 15000
 blocked_domains_file = policy/blocked.txt
 )");
@@ -242,6 +244,7 @@ blocked_domains_file = policy/blocked.txt
   EXPECT_SHOW_EQ(cfg->tls_cert.string(), "certs/server.pem");
   EXPECT_SHOW_EQ(cfg->tls_key.string(), "certs/server.key");
   EXPECT_SHOW_EQ(cfg->max_connections, 250u);
+  EXPECT_SHOW_EQ(cfg->max_connections_per_source, 8u);
   EXPECT_SHOW_EQ(cfg->idle_timeout.count(), 15000);
   EXPECT_SHOW_EQ(cfg->blocked_domains_file.string(), "policy/blocked.txt");
 }
@@ -250,13 +253,14 @@ TEST(ParseConfig, BlockAndFrontEndRanges) {
   const auto ok = [](const std::string& line) { return mw::parse_config("mode = recursive\n" + line + "\n").has_value(); };
   for (const char* line : {"block_window_ms = 100", "block_window_ms = 3600000", "block_duration_ms = 1000", "block_duration_ms = 604800000",
                            "block_max_entries = 1", "block_max_entries = 10000000", "max_connections = 1", "max_connections = 100000",
-                           "idle_timeout_ms = 1000", "idle_timeout_ms = 300000", "block_protocol_strikes = 0"}) {
+                           "idle_timeout_ms = 1000", "idle_timeout_ms = 300000", "block_protocol_strikes = 0",
+                           "max_connections_per_source = 0", "max_connections_per_source = 100000"}) {
     EXPECT_SHOW_EQ_AS(line, ok(line), true);
   }
   for (const char* line : {"block_window_ms = 99", "block_window_ms = 3600001", "block_duration_ms = 999", "block_duration_ms = 604800001",
                            "block_max_entries = 0", "block_max_entries = 10000001", "max_connections = 0", "max_connections = 100001",
                            "idle_timeout_ms = 999", "idle_timeout_ms = 300001", "block_protocol_strikes = -1", "block_rate_limit_strikes = 3x",
-                           "listen = localhost:853"}) {
+                           "listen = localhost:853", "max_connections_per_source = 100001", "max_connections_per_source = -1"}) {
     EXPECT_TRUE(error_on_line("mode = recursive\n" + std::string(line) + "\n", 2)) << line;
   }
 }

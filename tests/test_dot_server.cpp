@@ -78,17 +78,32 @@ namespace {
         return out;
     }
 
+    // query() with an empty EDNS padding option, so the answer is padded to a 468-byte block
+    std::vector<std::byte> padded_query(uint16_t id, const std::string& name) {
+        auto out             = query(id, name, kTypeA, 0);
+        out[out.size() - 1]  = std::byte{ 4 }; // OPT RDLENGTH
+        const uint8_t pad[4] = { 0, 12, 0, 0 };
+        for (uint8_t b : pad) {
+            out.push_back(static_cast<std::byte>(b));
+        }
+        return out;
+    }
+
     uint16_t rcode_of(const std::vector<std::byte>& reply) {
         return get16(reply, 2) & 0xF;
     }
 
     class DotClient {
     public:
-        explicit DotClient(uint16_t port, int max_version = TLS1_3_VERSION) {
+        // receive_buffer > 0 fixes SO_RCVBUF before connecting, which turns off the kernel's autotuning
+        explicit DotClient(uint16_t port, int max_version = TLS1_3_VERSION, int receive_buffer = 0) {
             ctx_ = SSL_CTX_new(TLS_client_method());
             SSL_CTX_set_min_proto_version(ctx_, TLS1_2_VERSION);
             SSL_CTX_set_max_proto_version(ctx_, max_version);
             fd_ = socket(AF_INET, SOCK_STREAM, 0);
+            if (receive_buffer > 0) {
+                setsockopt(fd_, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof receive_buffer);
+            }
             const timeval timeout{ 2, 0 };
             setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
             setsockopt(fd_, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
@@ -154,6 +169,22 @@ namespace {
         bool connected_    = false;
         bool handshake_ok_ = false;
     };
+
+    // a plain TCP connection to the server, no TLS; -1 on failure
+    int raw_connect(uint16_t port) {
+        const int fd = socket(AF_INET, SOCK_STREAM, 0);
+        const timeval timeout{ 2, 0 };
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port   = htons(port);
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+        if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
+            close(fd);
+            return -1;
+        }
+        return fd;
+    }
 
     mw::Config middleware_config() {
         mw::Config cfg;
@@ -319,8 +350,8 @@ TEST(DotServer, BlockedSourceIsDroppedBeforeTheHandshake) {
     Harness h(cfg);
     h.middleware->report_abuse("127.0.0.1");
 
+    // connect() itself may succeed or not: under load the reset can land before it returns
     DotClient client(h.port());
-    EXPECT_SHOW_EQ_AS("TCP connect still works", client.connected(), true);
     EXPECT_SHOW_EQ(client.handshake_ok(), false);
     EXPECT_SHOW_EQ(h.server->connection_count(), 0u);
 }
@@ -420,4 +451,118 @@ TEST(DotServer, StopClosesConnections) {
     h.server->stop();
     EXPECT_SHOW_EQ(h.server->connection_count(), 0u);
     EXPECT_SHOW_EQ_AS("closed", client.receive().has_value(), false);
+}
+
+TEST(DotServer, ConnectionsPerSourceAreCapped) {
+    auto opts                       = server_options();
+    opts.max_connections_per_source = 1;
+    Harness h(middleware_config(), opts);
+    {
+        DotClient first(h.port());
+        ASSERT_TRUE(first.handshake_ok());
+        DotClient second(h.port());
+        EXPECT_SHOW_EQ(second.handshake_ok(), false);
+        EXPECT_SHOW_EQ(h.server->connection_count(), 1u);
+    }
+    ASSERT_TRUE(eventually([&] { return h.server->connection_count() == 0; }));
+    DotClient again(h.port());
+    EXPECT_SHOW_EQ_AS("slot freed when the first left", again.handshake_ok(), true);
+}
+
+TEST(DotServer, TricklingBytesDoesNotKeepAConnectionOpen) {
+    auto opts         = server_options();
+    opts.idle_timeout = mw::Ms(300);
+    Harness h(middleware_config(), opts);
+    DotClient client(h.port());
+    ASSERT_TRUE(client.handshake_ok());
+    ASSERT_TRUE(eventually([&] { return h.server->connection_count() == 1; }));
+    // a 32-byte message, one byte every 100 ms: it would take 3 s to finish
+    ASSERT_TRUE(client.send_raw({ std::byte{ 0 }, std::byte{ 32 } }));
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 30 && h.server->connection_count() == 1; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        client.send_raw({ std::byte{ 0 } });
+    }
+    const auto waited = std::chrono::duration_cast<mw::Ms>(std::chrono::steady_clock::now() - start).count();
+    EXPECT_SHOW_EQ_AS("closed", h.server->connection_count(), 0u);
+    EXPECT_LE(waited, 1500);
+}
+
+TEST(DotServer, ClientThatStopsReadingIsReset) {
+    auto opts             = server_options();
+    opts.idle_timeout     = mw::Ms(300);
+    opts.max_unsent_bytes = std::size_t{ 1 } << 30; // so only the stall timeout can close it
+    Harness h(middleware_config(), opts);
+    // a small, fixed window and padded answers, so the backlog builds quickly
+    DotClient client(h.port(), TLS1_3_VERSION, 4096);
+    ASSERT_TRUE(client.handshake_ok());
+    // keeps sending whole queries, which used to count as activity, and never reads an answer
+    const auto start = std::chrono::steady_clock::now();
+    const auto limit = start + std::chrono::seconds(5);
+    uint16_t id      = 0;
+    while (std::chrono::steady_clock::now() < limit && client.send(padded_query(++id, "flood.example"))) {
+    }
+    const auto waited = std::chrono::duration_cast<mw::Ms>(std::chrono::steady_clock::now() - start).count();
+    EXPECT_LT(waited, 5000) << "the connection was never closed";
+    ASSERT_TRUE(eventually([&] { return h.server->connection_count() == 0; }));
+}
+
+TEST(DotServer, HangingUpMidHandshakeIsNotAStrike) {
+    auto cfg                   = middleware_config();
+    cfg.block_protocol_strikes = 1;
+    Harness h(cfg);
+    const int fd = raw_connect(h.port()); // what a TCP health check does
+    ASSERT_GE(fd, 0);
+    ASSERT_TRUE(eventually([&] { return h.server->connection_count() == 1; }));
+    close(fd);
+    ASSERT_TRUE(eventually([&] { return h.server->connection_count() == 0; }));
+    EXPECT_SHOW_EQ(h.middleware->is_blocked("127.0.0.1"), false);
+    DotClient client(h.port());
+    EXPECT_SHOW_EQ(client.handshake_ok(), true);
+}
+
+TEST(DotServer, SomethingOtherThanTlsIsAStrike) {
+    auto cfg                   = middleware_config();
+    cfg.block_protocol_strikes = 1;
+    Harness h(cfg);
+    const int fd = raw_connect(h.port());
+    ASSERT_GE(fd, 0);
+    const std::string http = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    ASSERT_EQ(write(fd, http.data(), http.size()), static_cast<ssize_t>(http.size()));
+    char buf[256];
+    while (read(fd, buf, sizeof buf) > 0) {
+    }
+    close(fd);
+    EXPECT_TRUE(eventually([&] { return h.middleware->is_blocked("127.0.0.1"); }));
+}
+
+TEST(DotServer, StopWithGraceDeliversOutstandingAnswers) {
+    Harness h;
+    h.state->close_gate();
+    DotClient client(h.port());
+    ASSERT_TRUE(client.handshake_ok());
+    ASSERT_TRUE(client.send(query(0x8888, "slow.example")));
+    ASSERT_TRUE(eventually([&] { return h.middleware->metrics_snapshot().received == 1; }));
+    std::thread opener([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        h.state->open_gate();
+    });
+    h.server->stop(mw::Ms(2000));
+    opener.join();
+    const auto reply = client.receive();
+    ASSERT_TRUE(reply.has_value());
+    EXPECT_SHOW_EQ(get16(*reply, 0), 0x8888);
+    EXPECT_SHOW_EQ_AS("closed after the answer", client.receive().has_value(), false);
+}
+
+TEST(DotServer, StartAfterStopServesAgain) {
+    Harness h;
+    h.server->stop();
+    ASSERT_TRUE(h.server->start().has_value());
+    DotClient client(h.port());
+    ASSERT_TRUE(client.handshake_ok());
+    ASSERT_TRUE(client.send(query(0x9999, "example.com")));
+    const auto reply = client.receive();
+    ASSERT_TRUE(reply.has_value());
+    EXPECT_SHOW_EQ(get16(*reply, 0), 0x9999);
 }

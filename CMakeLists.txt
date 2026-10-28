@@ -9,7 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_TESTING "Build the unit tests" ON)
 
 find_package(Threads REQUIRED)
-find_package(OpenSSL REQUIRED)
+find_package(OpenSSL 3.0 REQUIRED)
 
 # Everything except main.cpp, so the tests can reuse it without a second main()
 set(DNS_LIB_SOURCES

@@ -1,3 +1,7 @@
 build/
 .idea/
 .vscode/
+
+# TLS certificates and private keys must never be committed
+*.pem
+*.key

@@ -78,6 +78,7 @@ inline void PrintTo(Transport transport, std::ostream* os) {
   switch (transport) {
   case Transport::Udp: *os << "Udp"; return;
   case Transport::Tcp: *os << "Tcp"; return;
+  case Transport::Dot: *os << "Dot"; return;
   }
   *os << "Transport(" << static_cast<int>(transport) << ")";
 }

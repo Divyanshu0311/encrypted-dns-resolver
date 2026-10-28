@@ -34,7 +34,8 @@ inline ResolveResult error_result(Rcode rc) {
 
 enum class Transport : uint8_t {
   Udp,
-  Tcp
+  Tcp,
+  Dot // DNS over TLS, RFC 7858
 };
 
 // here and not in load_balancer.hpp so config.hpp can use it

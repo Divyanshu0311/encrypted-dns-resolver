@@ -26,6 +26,13 @@ struct Upstream {
   bool operator==(const Upstream&) const = default;
 };
 
+struct ListenAddress {
+  std::string host = "0.0.0.0";
+  uint16_t port = 853;
+
+  bool operator==(const ListenAddress&) const = default;
+};
+
 struct Config {
   Mode mode = Mode::Forwarding;
   std::vector<Upstream> upstreams;         // must be non-empty in forwarding mode
@@ -38,16 +45,32 @@ struct Config {
   Ms cooldown{5000};                       // >= 100
   double rate_limit_qps = 0;               // 0 disables the limiter
   double rate_limit_burst = 0;             // >= 1 when qps > 0
+  uint32_t block_rate_limit_strikes = 0;   // 0 disables; needs rate_limit_qps > 0
+  uint32_t block_protocol_strikes = 0;     // 0 disables; above block_rate_limit_strikes when both are set
+  Ms block_window{10000};                  // 100-3600000
+  Ms block_duration{300000};               // 1000-604800000 (a week)
+  std::size_t block_max_entries = 100000;  // 1-10000000
   LogLevel log_level = LogLevel::Info;
+
+  // front end
+  ListenAddress listen;
+  std::filesystem::path tls_cert;          // both or neither
+  std::filesystem::path tls_key;
+  std::size_t max_connections = 1000;      // 1-100000
+  Ms idle_timeout{10000};                  // 1000-300000
+  std::filesystem::path blocked_domains_file; // empty means no domain blocking
 };
 
 // 1.1.1.1, 1.1.1.1:53, [2606:4700::1111]:53 or a bare 2606:4700::1111. port defaults to 53
 std::expected<Upstream, std::string> parse_upstream(std::string_view s);
 
+// same forms as parse_upstream, port defaults to 853
+std::expected<ListenAddress, std::string> parse_listen(std::string_view s);
+
 // parses `key = value` text only, touches no files. errors look like "line 7: unknown key 'worker'"
 std::expected<Config, std::string> parse_config(std::string_view text);
 
-// reads the file, parses it, then checks records_file exists if it is set
+// reads the file, parses it, then checks that every file path that is set exists
 std::expected<Config, std::string> load_config(const std::filesystem::path& path);
 
 } // namespace mw

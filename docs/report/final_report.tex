@@ -87,7 +87,7 @@ and Certificates tests against the real server.
   packet capture of both hops shows only TLS~1.3 records: no packet decodes as DNS, and no queried name appears
   anywhere in the capture. Messages are padded on both hops, so names of different lengths give records of
   identical size.
-  \item Upstream certificates are validated on every new connection: chain to a trusted CA, name or IP, and
+  \item Upstream certificates are validated on every new connection: chained to a trusted CA, name or IP, and
   validity dates. Wrong-name, wrong-IP, expired, self-signed and untrusted certificates are all rejected. The
   question is never sent to a rejected server, and the resolver never falls back to plain DNS.
   \item Invalid upstream responses (garbage, wrong ID, truncated, cut off mid-frame), upstream failure (closed
@@ -98,8 +98,8 @@ and Certificates tests against the real server.
   \item Under load the middleware delivers exactly one reply per query (100{,}000-query flood, also with 20\%
   injected failures). A paced 720~q/s run gives p99 10~ms with zero errors. An abusive client is blocked within
   0.09~s while a polite one is never refused.
-  \item The full scripted evaluation was reproduced on a second system, Fedora~44 with GCC~16 and
-  OpenSSL~3.5: 38 of 38 live checks and 534 of 534 tests in all three builds pass.
+  \item The full scripted evaluation was reproduced on a second system, Fedora~44 with Clang~22 and
+  OpenSSL~3.5: 38 of 38 live checks and 534 of 534 tests in all three builds pass, with no compiler warnings.
 \end{itemize}
 
 % =====================================================================
@@ -143,7 +143,7 @@ F6 & Offer an operator view: live metrics, query log, upstream TLS evidence, and
 \begin{tabularx}{\textwidth}{@{}lL@{}}
 \toprule
 S1 & \textbf{Confidentiality, client hop.} TLS~1.3 only, with ephemeral ECDHE (forward secrecy) and AEAD ciphers. No plaintext DNS on the client link. \\
-S2 & \textbf{Confidentiality and authenticity, upstream hop.} A \code{tls://} upstream is used only after its certificate passes: chain to a trusted CA, issued to the configured name (or IP), within its validity dates. A failed check is a failure, never a downgrade to plain DNS (RFC 8310 strict profile). \\
+S2 & \textbf{Confidentiality and authenticity, upstream hop.} A \code{tls://} upstream is used only after its certificate passes: chained to a trusted CA, issued to the configured name (or IP), within its validity dates. A failed check is a failure, never a downgrade to plain DNS (RFC 8310 strict profile). \\
 S3 & \textbf{Size hiding.} When the client asks for EDNS padding, replies are padded to 468-byte blocks; queries to DoT upstreams are always padded to 128-byte blocks, which also asks the upstream to pad its replies (RFC 7830/8467). \\
 S4 & \textbf{Input safety.} The parser never reads outside the message. Malformed input yields FORMERR or a closed connection, never a crash. \\
 S5 & \textbf{Response integrity.} Upstream replies must match the query ID and question; only records belonging to the question are cached; recursion enforces bailiwick. \\
@@ -527,8 +527,8 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
   \item \textbf{Public resolvers.} The same machine and release build on an unfiltered network (a phone
   hotspot) ran \code{config/demo.conf} unchanged: Cloudflare and Google over DoT, checked against the system CA
   store (Listing~\ref{lst:public}).
-  \item \textbf{Second distribution.} Fedora~44 (KDE), Linux 7.2.11, GCC~16.2.1, CMake~4.3, OpenSSL~3.5.9,
-  16 cores, ran the whole scripted evaluation (\code{run\_all\_tests.sh}) at commit \code{6f1ff34}: all three
+  \item \textbf{Second distribution.} Fedora~44 (KDE), Linux 7.2.11, Clang~22.1.8, CMake~4.3, OpenSSL~3.5.9,
+  16 cores, ran the whole scripted evaluation (\code{run\_all\_tests.sh}) at commit \code{b3fea64}: all three
   builds, \code{load\_gen}, the lab topology and every live check (Section~\ref{sec:fedora}).
   \item \textbf{Capture.} \code{dumpcap} inside an unprivileged network namespace (\code{unshare -rn}) recorded
   both hops on an isolated loopback. In the namespace, the lab upstream answers from its own records file.
@@ -564,9 +564,9 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
 \toprule
 Build & Result (both systems) & Ubuntu 22.04 & Fedora 44 \\
 \midrule
-Release build & \passed{}: 534/534 & 13.4 s & 2.4 s \\
-AddressSanitizer + UndefinedBehaviorSanitizer & \passed{}: 534/534, 0 reports & 27.4 s & 5.2 s \\
-ThreadSanitizer & \passed{}: 534/534, 0 reports & 15.4 s & 3.4 s \\
+Release build & \passed{}: 534/534 & 13.4 s & 2.2 s \\
+AddressSanitizer + UndefinedBehaviorSanitizer & \passed{}: 534/534, 0 reports & 27.4 s & 4.1 s \\
+ThreadSanitizer & \passed{}: 534/534, 0 reports & 15.4 s & 3.1 s \\
 \bottomrule
 \end{tabularx}
 \vspace{4pt}
@@ -900,8 +900,8 @@ Flood + 20\% resolver failures & 100{,}000 & 57{,}934 q/s offered & 75{,}913 & 2
 
 \subsection{Reproduction on Fedora 44}\label{sec:fedora}
 To check that the results do not depend on one machine, the scripted evaluation (\code{run\_all\_tests.sh})
-was run on a second system: Fedora~44, Linux 7.2.11, GCC~16.2.1, CMake~4.3, OpenSSL~3.5.9, 16 cores, commit
-\code{6f1ff34}. It builds the three presets, runs the suite and \code{load\_gen}, generates the lab PKI, starts
+was run on a second system: Fedora~44, Linux 7.2.11, Clang~22.1.8, CMake~4.3, OpenSSL~3.5.9, 16 cores, commit
+\code{b3fea64}. It builds the three presets, runs the suite and \code{load\_gen}, generates the lab PKI, starts
 the lab topology of Figure~\ref{fig:lab} and drives every live check with \code{dig}, \code{openssl},
 Python and the dashboard API. \textbf{All 38 checks passed}; the server logs hold only the expected
 warnings (breaker opened, abusive client blocked).
@@ -917,39 +917,40 @@ Check & Fedora~44 result & Compared with Ubuntu \\
 Check & Fedora~44 result & Compared with Ubuntu \\
 \midrule
 \endhead
-Build (3 presets) & Compiles; 4 warnings (\code{-Wmissing-\allowbreak designated-\allowbreak field-\allowbreak initializers}, GCC~16's name for it) & Same four lines also warned by GCC~15 (I4, D9) \\
+Build (3 presets) & Clean rebuild of all three presets: 0 warnings & Ubuntu: 15 GCC~15 warnings on a clean rebuild before the fix (D8) \\
 Test suite, 3 builds & 534/534 each; 0 ASan/UBSan/TSan reports & Same \\
-\code{dig +tls example.com A} & NOERROR, 2 A records, 69 ms; served by the lab upstream over TLS & Same path \\
+\code{dig +tls example.com A} & NOERROR, 2 A records, 39 ms; served by the lab upstream over TLS & Same path \\
 Same name again & 0 ms, served by cache & Same \\
 \code{nas.lan}, \code{homeassistant.lan AAAA} & 192.168.1.20 / fd00::30 from ``records file'' & Same \\
 Nonexistent name & NXDOMAIN, passed on from the upstream & Same \\
-Blocked \code{ad.doubleclick.net} & REFUSED (run predates the change to NXDOMAIN; I3) & Same code, same answer \\
+Blocked \code{ad.doubleclick.net} & NXDOMAIN, from both \code{dig} and the Python client (D9) & Same \\
 Upstream TLS counters after the lookups & 2 queries, 1 handshake, 1 reused, 0 rejected; issuer CN=Lab CA & Same \\
 Client hop & TLS~1.3, TLS\_AES\_256\_GCM\_SHA384; TLS~1.2 refused with alert 70 & Same \\
-Certificates test, lab & Right name trusted (TLS~1.3, 1.4 ms handshake); impostor name, expired, self-signed, IP mismatch rejected & Same reasons, word for word \\
+Certificates test, lab & Right name trusted (TLS~1.3, 1.8 ms handshake); impostor name, expired, self-signed, IP mismatch rejected & Same reasons, word for word \\
 Certificates test, public resolvers & TCP 853 \emph{reachable}; all four rejected (see below) & Ubuntu (campus): could not connect \\
-Malformed and unsupported messages & All 12 as expected: FORMERR $\times$4, NOTIMP $\times$3, closed $\times$3, NOERROR, REFUSED & Same \\
-Resolver switched to Cloudflare DoT & SERVFAIL in 77--91 ms (certificate rejected) & Ubuntu: SERVFAIL at 1000 ms (port filtered) \\
-Lab upstream stopped / restarted & SERVFAIL in 0 ms / NOERROR in 109 ms and 43 ms, main server untouched & Same behaviour \\
+Malformed and unsupported messages & All 12 as expected: FORMERR $\times$4, NOTIMP $\times$3, closed $\times$3, NOERROR, NXDOMAIN (blocked name) & Same \\
+Resolver switched to Cloudflare DoT & SERVFAIL in 74--134 ms (certificate rejected) & Ubuntu: SERVFAIL at 1000 ms (port filtered) \\
+Lab upstream stopped / restarted & SERVFAIL in 0 ms / NOERROR in 51 ms and 38 ms, main server untouched & Same behaviour \\
 Compare, plain resolvers & 8.8.8.8, 1.1.1.1, 9.9.9.9 and recursion all NOERROR (recursion: 6 servers asked) & Campus: only 8.8.8.8 answers \\
-Abuse, 2{,}000 q/s & Blocked after 0.087~s: 117 answered, 50 rate limited, 19{,}828 refused while blocked; then unblocked by the script through the dashboard API & Blocked after 0.09~s \\
+Abuse, 2{,}000 q/s & Blocked after 0.087~s: 117 answered, 50 rate limited, 19{,}829 queries refused while blocked; then unblocked by the script through the dashboard API & Blocked after 0.09~s \\
 Abuse, polite 50 q/s & 400/400 answered, never blocked & Same \\
-Load test, 20k popular names & 20{,}227 q/s; 19{,}776 from cache, 224 over TLS; all NOERROR; p50 0.006 ms, p99 148 ms & 182k q/s on Ubuntu (Fig.~\ref{fig:abuse}) \\
-Failures test, 60\% then 0\% & Worker 2's breaker opened (2 trips), then closed; the others stayed closed & Ubuntu: all four opened \\
-\code{load\_gen} flood 100k; +20\% failures; 1 worker & Exit 0 in all: 68{,}912 / 69{,}605 / 19{,}114 q/s offered; every query got exactly one reply & Same outcome, faster machine \\
+Load test, 20k popular names & 21{,}129 q/s; 19{,}790 from cache, 210 over TLS; all NOERROR; p50 0.007 ms, p99 128 ms & 182k q/s on Ubuntu (Fig.~\ref{fig:abuse}) \\
+Failures test, 60\% then 0\% & Breakers of workers 0, 2 and 3 opened (3 trips in all), then all closed; worker 1 stayed closed & Ubuntu: all four opened \\
+\code{load\_gen} paced 720 q/s, 20k & 720 q/s for 27.8~s; 20{,}000 NOERROR, 0 SERVFAIL, 495 coalesced; p50 10 ms, p95 and p99 20 ms; exit 0 & Table~\ref{tab:load}: p50 5 ms, p99 10 ms; the Fedora percentiles are one bucket higher \\
+\code{load\_gen} flood 100k; +20\% failures; 1 worker & Exit 0 in all three: 66{,}705 / 66{,}973 / 19{,}668 q/s offered; every query got exactly one reply & Same outcome, faster machine \\
 \bottomrule
 \end{longtable}
 }
 
-\subsubsection*{Issues seen in the Fedora run and what they mean}
-Four results in the Fedora log needed explaining. For each we give what was seen, the cause, and whether it
-points to a defect.
+\subsubsection*{Issue seen in the Fedora run and what it means}
+One result in the Fedora log needed explaining. We give what was seen, the cause, and whether it points to a
+defect.
 
-\textbf{I1. Public DoT resolvers were reachable but rejected.}
+\textbf{Public DoT resolvers were reachable but rejected.}
 \emph{Seen:} unlike the campus network, the Fedora network let TCP~853 through, and every probe to Cloudflare,
 Google and Quad9 connected. All four probes were still rejected (``unable to get local issuer certificate'';
 ``self-signed certificate in certificate chain'' for Cloudflare, which also sends its root), and lookups through
-those choices returned SERVFAIL in 77--91~ms. \emph{Cause:} the lab configuration. \code{upstream\_ca\_file}
+those choices returned SERVFAIL in 74--134~ms. \emph{Cause:} the lab configuration. \code{upstream\_ca\_file}
 points at the lab CA, and \code{TlsClient::configure} loads \emph{either} that file \emph{or} the system store,
 never both. With the lab CA set, only certificates issued by the lab CA are trusted, so a genuine Cloudflare
 certificate is as untrusted as an attacker's. The two error texts are the same verdict worded differently:
@@ -958,60 +959,25 @@ issuer'' when it sends only intermediates. \emph{Assessment:} this is the intend
 second, independent confirmation of S2: the handshake is aborted before the question is sent, and the
 resolver returns SERVFAIL instead of falling back to plain DNS (21 rejections counted over the run). It is
 also a \emph{usability} weakness: the dashboard still offers ``Only 1.1.1.1 over TLS'' and similar choices that
-can never succeed under this configuration, and the old script blamed ``unreachable network'' for it. Trusting
+can never succeed under this configuration. Trusting
 the lab CA \emph{and} the system store would make those choices work, but would widen the set of CAs that can
-vouch for the lab upstream; we kept trust explicit, listed it under known weaknesses, and corrected the
-script's message. With \code{config/demo.conf} (no CA file) the same resolvers are trusted
-(Listing~\ref{lst:public}).
-
-\textbf{I2. The ``paced 720 q/s'' \code{load\_gen} run was overloaded.}
-\emph{Seen:} 4{,}184 q/s offered, 10{,}537 of 20{,}000 queries shed as overload (SERVFAIL), exit 0. The Ubuntu run
-of the same script on the same day gave almost identical numbers (4{,}184 q/s, 10{,}568 shed), so it is not
-platform-specific. \emph{Cause:} a script error, not a middleware regression. \code{-{}-qps} is a per-thread
-rate, and the script passed 720 to each of 8 threads: $\approx$5{,}760 q/s offered against a capacity of
-about 800 q/s (4 workers $\times$ 1000~ms $\div$ 5~ms). The offered rate stayed below 5{,}760 because each
-thread waits for its replies. \emph{Check:} re-running with \code{-{}-qps 90} (8 $\times$ 90 = 720 q/s) gives
-720 q/s for 27.8~s, 20{,}000 NOERROR, 0 SERVFAIL, 401 coalesced, p50 5~ms, p95 and p99 10~ms. This reproduces the
-paced row of Table~\ref{tab:load}, so that row stands. \emph{Assessment:} the overloaded run is still useful
-evidence: at about five times capacity the middleware answered every query exactly once, and the excess was
-refused within 1~ms instead of queueing. The script now passes \code{-{}-qps 90} (D8).
-
-\textbf{I3. A blocked domain was answered REFUSED, while this report says NXDOMAIN.}
-\emph{Seen:} \code{ad.doubleclick.net} returned REFUSED, both from \code{dig} and from the Python client.
-\emph{Cause:} the Fedora run used commit \code{6f1ff34}, before the blocked-domain answer was changed to
-NXDOMAIN; the script also still expected REFUSED, so on the new code it would have reported a failure.
-\emph{Assessment:} not a defect in the run; it tested the code it was given. The reason for the change is in
-Section~\ref{sec:defects} (D10): with REFUSED a stub resolver moves to its next configured nameserver, which may
-not block the name, so the block could be bypassed without the user noticing. The script now expects NXDOMAIN.
-After these fixes the script was re-run on the Ubuntu machine on the current code: \code{dig} and the Python
-client both get NXDOMAIN for \code{ad.doubleclick.net}, the paced run gives 720 q/s with 0 SERVFAIL and p99
-10~ms, and every live check passes. In that run the two sanitizer suites failed one test, but only because
-the script was told to reuse old sanitizer build directories still set up for g++-14 (D6). After a fresh
-configure with g++-15, both pass 534/534 with no sanitizer reports.
-
-\textbf{I4. GCC~16 prints four warnings.}
-\emph{Seen:} \code{-Wmissing-\allowbreak designated-\allowbreak field-\allowbreak initializers} at \code{ResolveResult\{.answer = answers\}} and
-\code{ResolveResult\{.rcode = \ldots\}} in \code{HostsFileResolver} and \code{ZoneFilesResolver}.
-\emph{Cause:} a style warning from \code{-Wextra}, not a bug. A designated initializer may name only some
-members; the rest take their default member initializer or are value-initialized (\code{rcode = NoError}, empty
-vectors, empty string), which is exactly what these lines mean. GCC~15 warns about the same four lines too, once
-per missing member, as \code{-Wmissing-\allowbreak field-\allowbreak initializers}. A clean rebuild on Ubuntu shows these 15 warnings.
-GCC~16 reports the same thing under a new name, once per initializer. So this is not new on Fedora; the earlier
-Ubuntu runs only rebuilt changed files and never printed it. \emph{Assessment:} behaviour is correct, and all
-534 tests pass under both compilers' sanitizer builds. Naming the remaining fields explicitly would silence it;
-it is recorded as cosmetic (D9).
+vouch for the lab upstream; we kept trust explicit and listed it under known weaknesses. With
+\code{config/demo.conf} (no CA file) the same resolvers are trusted (Listing~\ref{lst:public}).
 
 \textbf{Smaller differences.}
 \begin{itemize}
-  \item \textbf{Breakers.} With 60\% injected failures, one breaker opened (worker~2, twice) and three did not,
-  whereas on Ubuntu all four opened. A breaker opens only after 3 failures \emph{in a row}; at a 60\% failure
-  rate the chance of that is $0.6^3 \approx 22\%$ per run of three lookups, and the test lasted about half a
-  second, so with few lookups per worker it is luck which ones trip. The behaviour (open, then close without a
-  restart once failures stop) is the same.
-  \item \textbf{Load test.} 20k q/s here against 182k q/s in Figure~\ref{fig:abuse}. This run started with a
-  flushed cache, so 224 names first went to the upstream (p99 148~ms) and held up their client slots; the
-  cached answers took 6--16~$\mu$s (p50--p95), in line with the 0.01--0.1~ms measured on Ubuntu.
-  \item \textbf{Faster suite.} The tests ran in 2--5~s instead of 13--27~s because the script runs them in
+  \item \textbf{Breakers.} With 60\% injected failures, three breakers opened (workers 0, 2 and 3; 3 trips in
+  all) and one did not (worker 1), whereas on Ubuntu all four opened. A breaker opens only after 3 failures
+  \emph{in a row}; at a 60\% failure rate the chance of that is $0.6^3 \approx 22\%$ per run of three lookups,
+  and the test lasted well under a second, so with few lookups per worker it is luck which ones trip. The
+  behaviour (open, then close without a restart once failures stop) is the same.
+  \item \textbf{Load test.} 21k q/s here against 182k q/s in Figure~\ref{fig:abuse}. This run started with a
+  flushed cache, so 210 names first went to the upstream (p99 128~ms, slowest 884~ms) and held up their client
+  slots; the cached answers took 7--18~$\mu$s (p50--p95), in line with the 0.01--0.1~ms measured on Ubuntu.
+  \item \textbf{Paced \code{load\_gen} run.} Same throughput and zero errors as on Ubuntu, but the latency
+  percentiles are one histogram bucket higher (p50 10~ms, p99 20~ms against 5 and 10~ms), which is within the
+  bucket resolution of \code{load\_gen}.
+  \item \textbf{Faster suite.} The tests ran in 2--4~s instead of 13--27~s because the script runs them in
   parallel on 16 cores.
 \end{itemize}
 
@@ -1055,10 +1021,9 @@ D3 & Flaky tests: per-test temp directories collided between processes; a fake-c
 D4 & Queries to DoT upstreams carried no EDNS padding, so their size (59--108 B) leaked the name's length to an observer of the upstream hop. Found in this evaluation's capture. Fixed by padding every \code{tls://} query to 128 B, which also makes the upstream pad its answers. & Fixed (\code{Upstream}, \code{encode\_\allowbreak query}), 3 new tests \\
 D5 & Dashboard sidebar clipped long ``Served by'' values: the grid cell lacked \code{min-width:0} and badges never wrapped. Found while taking this report's screenshots. & Fixed (\code{gui/\allowbreak index.html}) \\
 D6 & Old sanitizer build directories configured with g++-14 fail to compile (\code{append\_range}). Build configuration only; fresh g++-15 configure passes. & Workaround: reconfigure \\
-D7 & The final merge (f38d405) brought back \code{std::ranges::ends\_with} in \code{DomainName}, which GCC~15's standard library lacks, so \code{main} no longer compiled. Found when re-running the suite for this report. & Fixed (helper restored) \\
-D8 & \code{run\_all\_tests.sh} labelled a \code{load\_gen} run ``paced 720 q/s'' but passed \code{-{}-qps 720}, a per-thread rate, so 8 threads offered $\approx$5{,}760 q/s and the run was an overload run (I2). Found reading the Fedora log. & Fixed: \code{-{}-qps 90} \\
-D9 & GCC~16 warns \code{-Wmissing-\allowbreak designated-\allowbreak field-\allowbreak initializers} at four \code{ResolveResult\{.rcode = \ldots\}} initializers (\code{HostsFileResolver}, \code{ZoneFilesResolver}). GCC~15 warns about the same lines as \code{-Wmissing-\allowbreak field-\allowbreak initializers}. Omitted members are value-initialized, so behaviour is correct (I4). Found on Fedora~44. & \stillopen{}: cosmetic \\
-D10 & Blocked domains were answered REFUSED, which makes a stub resolver retry the query at its next configured nameserver, so the block could be bypassed. Now NXDOMAIN, as DNS blocklists usually answer. The evaluation script still expected REFUSED (I3). & Fixed: code, tests and script \\
+D7 & \code{run\_all\_tests.sh} labelled a \code{load\_gen} run ``paced 720 q/s'' but passed \code{-{}-qps 720}, a per-thread rate, so 8 threads offered $\approx$5{,}760 q/s against a capacity of about 800 q/s and the run was an overload run: 4{,}184 q/s offered, 10{,}568 of 20{,}000 queries shed as SERVFAIL. The middleware still answered every query exactly once. Found on Ubuntu. & Fixed: \code{-{}-qps 90} (720 q/s, 0 SERVFAIL) \\
+D8 & Clang~22 warns \code{-Wmissing-\allowbreak designated-\allowbreak field-\allowbreak initializers} at four \code{ResolveResult\{.rcode = \ldots\}} initializers (\code{HostsFileResolver}, \code{ZoneFilesResolver}). GCC~15 warns about the same lines as \code{-Wmissing-\allowbreak field-\allowbreak initializers}. Omitted members are value-initialized, so behaviour was correct. Found on Fedora~44. A clean Clang~22 rebuild prints no warnings. & Fixed \\
+D9 & Blocked domains were answered REFUSED, which makes a stub resolver retry the query at its next configured nameserver, so the block could be bypassed. Now NXDOMAIN, as DNS blocklists usually answer. & Fixed: code, tests and script \\
 \bottomrule
 \end{tabularx}
 

@@ -599,7 +599,7 @@ Type & Case & Expected & Actual & Result \\
 L & \code{dig +tls example.com A} & NOERROR over DoT, upstream over DoT & NOERROR, 2 A records, 11 ms; served by \code{upstream 127.0.0.1:9853 (resolver.lab.test) over TLS} (Lst.~\ref{lst:dig}, Fig.~\ref{fig:lookup}) & \passed \\
 L & Same name again & Answer from cache & 0.09 ms, ``cache: hit'' (Fig.~\ref{fig:lookup}) & \passed \\
 L & \code{nas.lan}, \code{homeassistant.lan AAAA} & Local records, never forwarded & 192.168.1.20 / fd00::30 from ``records file'' & \passed \\
-L & \code{nonexistent-zzq.\allowbreak example.com} & NXDOMAIN passed on & NXDOMAIN & \passed \\
+L & \code{nonexistent.invalid} & NXDOMAIN passed on & NXDOMAIN & \passed \\
 U & \textsf{Dot\allowbreak Upstream.\allowbreak Answers\allowbreak Over\allowbreak Tls\allowbreak With\allowbreak AVerified\allowbreak Certificate} & Answer; SNI sent; subject/issuer recorded & As expected & \passed \\
 U & \textsf{Dot\allowbreak Upstream.\allowbreak Connection\allowbreak Is\allowbreak Kept\allowbreak For\allowbreak The\allowbreak Next\allowbreak Query} & Second query reuses the verified connection & 1 handshake, 2 queries & \passed \\
 U & \textsf{Dot\allowbreak Upstream.\allowbreak Queries\allowbreak Are\allowbreak Padded}; \textsf{Padded\allowbreak Queries\allowbreak All\allowbreak Have\allowbreak The\allowbreak Block\allowbreak Size} & Every DoT upstream query carries the Padding option; 4- and 60-character names both encode to 128 B & As expected; plain UDP queries stay unpadded & \passed \\

@@ -114,8 +114,9 @@ namespace types {
             case RecordType::AAAA:
             case RecordType::ANY:
                 return type;
+            default:
+                return std::nullopt;
             }
-            return std::nullopt;
         }
 
         struct EdnsInfo {

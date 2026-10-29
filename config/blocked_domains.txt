@@ -1,0 +1,5 @@
+# Answered REFUSED, along with every name under them
+doubleclick.net
+googlesyndication.com
+ads.example.com
+tracker.example

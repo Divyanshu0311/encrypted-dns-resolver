@@ -30,7 +30,7 @@ class Responder {
 
     // true only for the call that actually delivered the result
     bool complete(ResolveResult result);
-    bool fail(Rcode rc);
+    bool fail(Rcode rc, std::string why = {});
 
     bool is_done() const noexcept { return done_.load(std::memory_order_acquire); }
     const QueryKey& key() const noexcept { return key_; }

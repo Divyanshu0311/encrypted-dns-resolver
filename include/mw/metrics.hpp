@@ -24,6 +24,9 @@ struct MetricsSnapshot {
   uint64_t timeouts = 0;
   uint64_t coalesced = 0;
   uint64_t resolver_exceptions = 0;
+  uint64_t blocked_queries = 0;  // refused because the client is blocked
+  uint64_t blocks_started = 0;   // clients that got blocked
+  uint64_t domain_refusals = 0;  // refused because the name is on the blocked domains list
   std::array<uint64_t, kRcodeSlots> replies_by_rcode{};
   std::array<uint64_t, kLatencyBuckets> latency_buckets{};
   uint64_t total_replies = 0;
@@ -40,6 +43,9 @@ class Metrics {
     std::atomic<uint64_t> timeouts_{0};
     std::atomic<uint64_t> coalesced_{0};
     std::atomic<uint64_t> resolver_exceptions_{0};
+    std::atomic<uint64_t> blocked_queries_{0};
+    std::atomic<uint64_t> blocks_started_{0};
+    std::atomic<uint64_t> domain_refusals_{0};
     std::array<std::atomic<uint64_t>, kRcodeSlots> replies_by_rcode_{};
     std::array<std::atomic<uint64_t>, kLatencyBuckets> latency_buckets_{};
 
@@ -57,6 +63,9 @@ class Metrics {
     void on_timeout() { timeouts_.fetch_add(1, std::memory_order_relaxed); }
     void on_coalesced() { coalesced_.fetch_add(1, std::memory_order_relaxed); }
     void on_resolver_exception() { resolver_exceptions_.fetch_add(1, std::memory_order_relaxed); }
+    void on_blocked_query() { blocked_queries_.fetch_add(1, std::memory_order_relaxed); }
+    void on_block_started() { blocks_started_.fetch_add(1, std::memory_order_relaxed); }
+    void on_domain_refused() { domain_refusals_.fetch_add(1, std::memory_order_relaxed); }
 
     // exactly once per reply delivered
     void record_reply(Rcode rc, Ms latency);

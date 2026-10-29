@@ -116,7 +116,9 @@ inline void PrintTo(LogLevel level, std::ostream* os) {
 }
 
 inline void PrintTo(const Upstream& u, std::ostream* os) {
-  *os << ::testing::PrintToString(u.host) << ":" << u.port;
+  *os << (u.tls ? "tls://" : "") << ::testing::PrintToString(u.host) << ":" << u.port;
+  if (!u.tls_name.empty())
+    *os << "#" << u.tls_name;
 }
 
 inline void PrintTo(const QueryKey& key, std::ostream* os) {

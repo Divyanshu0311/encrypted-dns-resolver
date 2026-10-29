@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <ranges>
 #include <stdexcept>
 
 #include "DomainName.hpp"

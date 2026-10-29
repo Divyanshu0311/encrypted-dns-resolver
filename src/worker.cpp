@@ -105,7 +105,7 @@ void Worker::run(std::stop_token st) {
     if (start >= job->deadline) {
       // too late to bother. not the resolver's fault so it is not a breaker failure, but
       // if this was the probe, reopen with no cooldown so the probe slot isn't lost
-      result = error_result(Rcode::ServFail);
+      result = error_result(Rcode::ServFail, "expired in queue");
       std::lock_guard<std::mutex> lock(breaker_mutex_);
       if (breaker_ == BreakerState::HalfOpen) {
         breaker_ = BreakerState::Open;
@@ -128,7 +128,7 @@ void Worker::run(std::stop_token st) {
       }
       if (threw) {
         metrics_.on_resolver_exception();
-        result = error_result(Rcode::ServFail);
+        result = error_result(Rcode::ServFail, "resolver threw");
       }
 
       // NXDomain and NoError are successes, only ServFail (or a throw) counts against us

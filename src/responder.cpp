@@ -29,8 +29,8 @@ bool Responder::complete(ResolveResult result) {
   return true;
 }
 
-bool Responder::fail(Rcode rc) {
-  return complete(error_result(rc));
+bool Responder::fail(Rcode rc, std::string why) {
+  return complete(error_result(rc, std::move(why)));
 }
 
 } // namespace mw

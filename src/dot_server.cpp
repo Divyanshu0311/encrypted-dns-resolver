@@ -27,7 +27,7 @@
 #include <vector>
 
 #include "mw/block_list.hpp"
-#include "mw/dns_message.hpp"
+#include "dns_message.hpp"
 #include "mw/dot_framer.hpp"
 #include "mw/logger.hpp"
 
@@ -478,10 +478,10 @@ namespace mw {
             return;
         }
 
-        auto parsed = parse_query(message);
+        auto parsed = types::parse_query(message);
         if (!parsed) {
-            const ParseError& e = parsed.error();
-            auto reply          = encode_parse_error(e);
+            const types::ParseError& e = parsed.error();
+            auto reply                 = types::encode_parse_error(e);
             if (!reply) {
                 middleware.report_abuse(c.peer.address); // no ID to reply to, or not a query at all
                 c.ending = Ending::Close;
@@ -495,14 +495,15 @@ namespace mw {
         }
 
         if (admission.refuses(*parsed)) {
-            queue_reply(c, encode_response(*parsed, error_result(Rcode::Refused)), now);
+            middleware.record_domain_refusal(parsed->name, parsed->type, ClientInfo{ c.peer.address, c.peer.port, Transport::Dot });
+            queue_reply(c, types::encode_response(*parsed, error_result(Rcode::Refused, "blocked domain")), now);
             return;
         }
 
         ++c.pending;
         // the query is copied in: the answer is encoded on whichever thread delivers it
         middleware.submit(parsed->name, parsed->type, ClientInfo{ c.peer.address, c.peer.port, Transport::Dot },
-                          [mailbox = mailbox, id = c.id, query = *parsed](ResolveResult result) { mailbox->post(id, encode_response(query, result)); });
+                          [mailbox = mailbox, id = c.id, query = *parsed](ResolveResult result) { mailbox->post(id, types::encode_response(query, result)); });
     }
 
     void DotServer::Impl::queue_reply(Connection& c, const std::vector<std::byte>& wire, TimePoint now) {

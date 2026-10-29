@@ -102,6 +102,26 @@ std::size_t BlockList::tracked_sources() const {
   return entries_.size();
 }
 
+std::size_t BlockList::blocked_count() const {
+  TimePoint now = clock_();
+  std::shared_lock lock(mutex_);
+  return static_cast<std::size_t>(std::ranges::count_if(entries_, [&](const auto& entry) { return entry.second.blocked_until > now; }));
+}
+
+bool BlockList::unblock(std::string_view ip) {
+  auto key = key_for(ip);
+  if (!key)
+    return false;
+  TimePoint now = clock_();
+  std::unique_lock lock(mutex_);
+  auto it = entries_.find(*key);
+  if (it == entries_.end())
+    return false;
+  bool was_blocked = it->second.blocked_until > now;
+  entries_.erase(it);
+  return was_blocked;
+}
+
 void BlockList::sweep(TimePoint now) {
   std::erase_if(entries_, [&](const auto& entry) {
     const Entry& e = entry.second;

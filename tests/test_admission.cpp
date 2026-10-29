@@ -9,8 +9,8 @@
 
 namespace {
 
-    mw::DnsQuery query(const std::string& name, mw::RecordType type = mw::RecordType::A) {
-        return mw::DnsQuery{ 0x1234, true, name, type, false, false };
+    types::DnsQuery query(const std::string& name, mw::RecordType type = mw::RecordType::A) {
+        return types::DnsQuery{ 0x1234, true, name, type, false, false };
     }
 
     mw::Admission parsed(const std::string& text) {

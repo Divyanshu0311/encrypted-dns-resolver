@@ -62,7 +62,7 @@ void DeadlineTimer::run(std::stop_token st) {
     // and schedule a new deadline, which would deadlock
     for (auto& weak : expired) {
       if (auto r = weak.lock()) {
-        if (r->fail(Rcode::ServFail))
+        if (r->fail(Rcode::ServFail, "timed out"))
           metrics_.on_timeout();
       }
     }

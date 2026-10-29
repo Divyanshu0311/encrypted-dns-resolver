@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(dns_server LANGUAGES CXX)
+project(encrypted-dns-resolver LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,6 +18,7 @@ set(DNS_LIB_SOURCES
     src/backend/ForwardingResolver.cpp
     src/backend/HostsFileResolver.cpp
     src/backend/RecursiveResolver.cpp
+    src/backend/Upstream.cpp
     src/backend/ZoneFile.cpp
     src/backend/ZoneFilesResolver.cpp
     src/block_list.cpp
@@ -32,6 +33,7 @@ set(DNS_LIB_SOURCES
     src/logger.cpp
     src/metrics.cpp
     src/middleware.cpp
+    src/query_log.cpp
     src/rate_limiter.cpp
     src/Records.cpp
     src/resolver_factory.cpp
@@ -42,7 +44,7 @@ set(DNS_LIB_SOURCES
 
 # The DNS-over-TLS server loop uses epoll and eventfd, which only Linux has
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    list(APPEND DNS_LIB_SOURCES src/dot_server.cpp)
+    list(APPEND DNS_LIB_SOURCES src/admin_server.cpp src/dot_server.cpp)
 endif()
 
 # Compiled once, linked into both the server and the tests (no archive/library produced)
@@ -93,19 +95,23 @@ if(BUILD_TESTING)
         tests/test_admission.cpp
         tests/test_block_list.cpp
         tests/test_bounded_queue.cpp
+        tests/test_cache.cpp
         tests/test_config.cpp
         tests/test_deadline_timer.cpp
         tests/test_dns_message.cpp
         tests/test_domainname.cpp
         tests/test_dot_framer.cpp
+        tests/test_forwarding_resolver.cpp
         tests/test_hostsfileresolver.cpp
         tests/test_inflight_table.cpp
         tests/test_IP.cpp
         tests/test_load_balancer.cpp
         tests/test_metrics.cpp
         tests/test_middleware.cpp
+        tests/test_query_log.cpp
         tests/test_rate_limiter.cpp
         tests/test_records.cpp
+        tests/test_recursive_resolver.cpp
         tests/test_resolver_factory.cpp
         tests/test_responder.cpp
         tests/test_tls_context.cpp
@@ -115,7 +121,7 @@ if(BUILD_TESTING)
         tests/test_zonefilesresolver.cpp
     )
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_sources(dns_tests PRIVATE tests/test_dot_server.cpp)
+        target_sources(dns_tests PRIVATE tests/test_admin_server.cpp tests/test_dot_server.cpp tests/test_dot_upstream.cpp)
     endif()
     # tests/ on the include path so "support/*.hpp" resolve
     target_include_directories(dns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

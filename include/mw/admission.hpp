@@ -6,7 +6,7 @@
 #include <string_view>
 #include <unordered_set>
 
-#include "mw/dns_message.hpp"
+#include "dns_message.hpp"
 #include "mw/types.hpp"
 
 namespace mw {
@@ -24,7 +24,7 @@ namespace mw {
         // an empty path blocks nothing
         static std::expected<Admission, std::string> load(const std::filesystem::path& file);
 
-        bool refuses(const DnsQuery& query) const;
+        bool refuses(const types::DnsQuery& query) const;
         std::size_t blocked_count() const noexcept { return blocked_.size(); }
 
     private:

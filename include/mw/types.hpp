@@ -6,6 +6,7 @@
 #include<memory>
 #include<string>
 #include<type_traits>
+#include<utility>
 
 #include "DomainName.hpp"
 #include "Records.hpp"
@@ -27,9 +28,9 @@ using DomainName = types::DomainName;
 // every worker owns one backend::Resolver chain. each call returns a new, independent chain
 using ResolverFactory = std::function<std::unique_ptr<backend::Resolver>()>;
 
-// result with just an rcode and no records
-inline ResolveResult error_result(Rcode rc) {
-  return ResolveResult{rc, {}, {}, {}};
+// result with just an rcode and no records. why ends up in served_by
+inline ResolveResult error_result(Rcode rc, std::string why = {}) {
+  return ResolveResult{rc, {}, {}, {}, std::move(why)};
 }
 
 enum class Transport : uint8_t {
@@ -49,6 +50,7 @@ struct ClientInfo {
   std::string address;
   uint16_t port = 0;
   Transport transport = Transport::Udp;
+  bool quiet = false; // left out of the query log: synthetic traffic such as the admin page's load test
 };
 
 // called exactly once per submit()

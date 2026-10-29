@@ -1,0 +1,5 @@
+# Local names for the demo, hosts-file format: address then names
+192.168.1.10   printer.lan
+192.168.1.20   nas.lan
+192.168.1.30   homeassistant.lan
+fd00::30       homeassistant.lan

@@ -6,8 +6,10 @@
 
 #ifdef __linux__
 #include <csignal>
+#include <optional>
 #include <pthread.h>
 
+#include "mw/admin_server.hpp"
 #include "mw/admission.hpp"
 #include "mw/dot_server.hpp"
 #include "mw/middleware.hpp"
@@ -41,7 +43,8 @@ namespace {
         sigaddset(&signals, SIGTERM);
         pthread_sigmask(SIG_BLOCK, &signals, nullptr);
 
-        mw::Middleware middleware(cfg, mw::make_factory(cfg));
+        mw::ResolverShared shared; // the cache and fault switch, also read by the admin page
+        mw::Middleware middleware(cfg, mw::make_factory(cfg, std::nullopt, shared));
         middleware.start();
         mw::DotServer server(mw::dot_server_options(cfg), *tls, *admission, middleware);
         if (auto started = server.start(); !started) {
@@ -49,11 +52,23 @@ namespace {
             middleware.stop(mw::Ms(0));
             return 1;
         }
+        std::optional<mw::AdminServer> admin;
+        if (cfg.admin_listen) {
+            admin.emplace(cfg, middleware, *admission, shared);
+            if (auto started = admin->start(); !started) {
+                mw::error("{}", started.error());
+                server.stop(mw::Ms(0));
+                middleware.stop(mw::Ms(0));
+                return 1;
+            }
+        }
 
         int sig = 0;
         sigwait(&signals, &sig);
         mw::info("{} received, shutting down", sig == SIGINT ? "SIGINT" : "SIGTERM");
-        // stop accepting and let answers already being looked up go out, then fail whatever is left
+        // stop accepting and let answers already being looked up go out, then fail whatever is left.
+        // the admin page goes first: its requests use the middleware
+        if (admin) admin->stop();
         server.stop(mw::Ms(2000));
         middleware.stop(mw::Ms(2000));
         return 0;

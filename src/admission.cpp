@@ -65,7 +65,7 @@ namespace mw {
         return admission;
     }
 
-    bool Admission::refuses(const DnsQuery& query) const {
+    bool Admission::refuses(const types::DnsQuery& query) const {
         if (blocked_.empty()) {
             return false;
         }

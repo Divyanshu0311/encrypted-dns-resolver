@@ -222,3 +222,28 @@ TEST(BlockList, ConcurrentReadersAndWriter) {
   }
   EXPECT_SHOW_EQ(list.is_blocked("10.0.0.1"), true);
 }
+
+TEST(BlockList, CountsBlockedSources) {
+  FakeClock clock;
+  mw::BlockList list(policy(), clock.fn());
+  strike_n(list, "10.0.0.1", mw::Offence::RateLimited, 3);
+  strike_n(list, "10.0.0.2", mw::Offence::RateLimited, 3);
+  strike_n(list, "10.0.0.3", mw::Offence::RateLimited, 1); // tracked, not blocked
+  EXPECT_SHOW_EQ(list.blocked_count(), 2u);
+  clock.advance(mw::Ms(60001));
+  EXPECT_SHOW_EQ(list.blocked_count(), 0u);
+}
+
+TEST(BlockList, UnblockLiftsTheBlockAndForgetsStrikes) {
+  FakeClock clock;
+  mw::BlockList list(policy(), clock.fn());
+  strike_n(list, "10.0.0.1", mw::Offence::RateLimited, 3);
+  ASSERT_SHOW_EQ(list.is_blocked("10.0.0.1"), true);
+  EXPECT_SHOW_EQ(list.unblock("10.0.0.1"), true);
+  EXPECT_SHOW_EQ(list.is_blocked("10.0.0.1"), false);
+  // strikes start again from zero
+  strike_n(list, "10.0.0.1", mw::Offence::RateLimited, 2);
+  EXPECT_SHOW_EQ(list.is_blocked("10.0.0.1"), false);
+  EXPECT_SHOW_EQ(list.unblock("10.0.0.1"), false); // tracked but not blocked
+  EXPECT_SHOW_EQ(list.unblock("not an ip"), false);
+}

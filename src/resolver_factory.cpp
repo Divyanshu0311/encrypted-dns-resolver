@@ -88,6 +88,8 @@ class ResolverChain final : public backend::Resolver {
         if (spec.kind == ResolverSpec::Kind::Recursive) {
           backend::RecursiveOptions opts;
           opts.total_timeout = cfg.request_timeout;
+          if (!cfg.root_hints.empty())
+            cache_->add_root_hints(cfg.root_hints);
           options.push_back(std::make_unique<backend::RecursiveResolver>(*cache_, opts));
           continue;
         }

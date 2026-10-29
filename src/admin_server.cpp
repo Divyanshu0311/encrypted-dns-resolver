@@ -551,6 +551,8 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
     lab->label = "Recursive from the root servers";
     backend::RecursiveOptions opts;
     opts.total_timeout = Ms(5000);
+    if (!cfg.root_hints.empty())
+      lab->cache->add_root_hints(cfg.root_hints);
     lab->resolver = std::make_unique<backend::RecursiveResolver>(*lab->cache, opts);
     labs.push_back(std::move(lab));
   }

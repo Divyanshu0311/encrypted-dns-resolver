@@ -1024,6 +1024,7 @@ D6 & Old sanitizer build directories configured with g++-14 fail to compile (\co
 D7 & \code{run\_all\_tests.sh} labelled a \code{load\_gen} run ``paced 720 q/s'' but passed \code{-{}-qps 720}, a per-thread rate, so 8 threads offered $\approx$5{,}760 q/s against a capacity of about 800 q/s and the run was an overload run: 4{,}184 q/s offered, 10{,}568 of 20{,}000 queries shed as SERVFAIL. The middleware still answered every query exactly once. Found on Ubuntu. & Fixed: \code{-{}-qps 90} (720 q/s, 0 SERVFAIL) \\
 D8 & Clang~22 warns \code{-Wmissing-\allowbreak designated-\allowbreak field-\allowbreak initializers} at four \code{ResolveResult\{.rcode = \ldots\}} initializers (\code{HostsFileResolver}, \code{ZoneFilesResolver}). GCC~15 warns about the same lines as \code{-Wmissing-\allowbreak field-\allowbreak initializers}. Omitted members are value-initialized, so behaviour was correct. Found on Fedora~44. A clean Clang~22 rebuild prints no warnings. & Fixed \\
 D9 & Blocked domains were answered REFUSED, which makes a stub resolver retry the query at its next configured nameserver, so the block could be bypassed. Now NXDOMAIN, as DNS blocklists usually answer. & Fixed: code, tests and script \\
+D10 & Cache was not updated with Root hints before setting up the recursive resolver, so it had to depend on its built-in list. & Fixed: option added for Root hints file \\
 \bottomrule
 \end{tabularx}
 
@@ -1044,7 +1045,7 @@ Blocking resolvers & Cache-miss throughput $\approx$ workers $\times$ (1000 ms $
 Cache checked inside the worker & Under overload, a cacheable query still waits behind slow lookups. \\
 No negative caching & NXDOMAIN is asked upstream every time. \\
 Query IDs from \code{mt19937} & Not cryptographically random; the random source port and TLS mitigate this. \\
-No DNSSEC; recursion over IPv4 only & Answers are trusted as received; IPv6-only zones unreachable. \\
+No DNSSEC. & Answers are trusted as received. \\
 No certificate pinning & Any trusted CA's certificate for the name passes. \\
 \code{upstream\_ca\_file} replaces the system store & With the lab CA configured, the dashboard's ``Only 1.1.1.1 over TLS'' choices are rejected even when reachable (Section~\ref{sec:fedora}). Safe, but the public choices are only usable with no CA file. \\
 Rate limit per IP (IPv6 /64) & Clients behind one NAT share a bucket and a block (false positives). \\
@@ -1192,7 +1193,8 @@ docs/               frontend.md/.tex, this report
 \end{enumerate}
 
 % =====================================================================
-\section{Appendix: minimum technical evidence index}
+\setcounter{secnumdepth}{0}
+\section{Appendix A: minimum technical evidence index}
 
 Project: \textbf{Encrypted DNS Resolver}. The chosen encrypted protocol is \textbf{DNS-over-TLS} (RFC 7858),
 used on both the client hop and the upstream hop.
@@ -1221,5 +1223,9 @@ Availability & Abuse blocking, load results, exactly-once delivery & Figures~\re
 Whole suite, sanitizers & 534/534 in release, ASan+UBSan, TSan & Table~\ref{tab:suite} \\
 \bottomrule
 \end{longtable}
+
+\section{Appendix B: Code}
+
+Code for the resolver is hosted at \url{https://github.com/Divyanshu0311/encrypted-dns-resolver}.
 
 \end{document}

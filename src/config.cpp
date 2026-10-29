@@ -176,6 +176,9 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
   else if (key == "records_file") {
     cfg.records_file = std::string(value);
   }
+  else if (key == "root_hints") {
+    cfg.root_hints = std::string(value);
+  }
   else if (key == "workers") {
     auto n = int_in_range(key, value, 1, 64);
     if (!n)

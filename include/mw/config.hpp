@@ -41,6 +41,7 @@ struct Config {
   std::vector<Upstream> upstreams;         // must be non-empty in forwarding mode
   std::filesystem::path upstream_ca_file;  // CAs that tls:// upstreams' certificates must chain to; empty: the system's
   std::filesystem::path records_file;      // empty means no local records
+  std::filesystem::path root_hints;        // empty means no root hints
   std::size_t workers = 4;                 // 1-64
   std::size_t queue_capacity = 256;        // 1-100000
   Ms request_timeout{2500};                // 50-30000

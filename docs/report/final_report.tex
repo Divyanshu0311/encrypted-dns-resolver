@@ -479,6 +479,7 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
 \section{Testing, results and security evaluation}
 
 \subsection{Test environment}
+\textbf{Environment A}
 \begin{itemize}
   \item Ubuntu 22.04, Linux 6.8, GCC 15, OpenSSL 3.0.2, release build, \code{workers = 4}, deadline 2~s.
   \item \textbf{Network constraint.} The evaluation network (campus Wi-Fi) drops outbound TCP 853 to every
@@ -490,6 +491,11 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
   \emph{expired} certificate from the same CA. The unreachable public resolvers became live timeout tests.
   \item \textbf{Capture.} \code{dumpcap} inside an unprivileged network namespace (\code{unshare -rn}) recorded
   both hops on an isolated loopback. In the namespace, the lab upstream answers from its own records file.
+\end{itemize}
+
+\textbf{Environment B}
+\begin{itemize}
+  \item Fedora 44, Linux 7.22, Clang 22, OpenSSL 3.5.9, release build
 \end{itemize}
 
 \begin{figure}[H]

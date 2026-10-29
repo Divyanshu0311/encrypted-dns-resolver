@@ -57,6 +57,12 @@ class BlockList {
 
     std::size_t tracked_sources() const;
 
+    // sources blocked right now
+    std::size_t blocked_count() const;
+
+    // lifts a block (and forgets the strikes) early. true if ip was blocked
+    bool unblock(std::string_view ip);
+
     // the address bytes (IPv4, or IPv4-mapped IPv6) or the /64 prefix. nullopt if ip is not an address
     static std::optional<std::string> key_for(std::string_view ip);
 };

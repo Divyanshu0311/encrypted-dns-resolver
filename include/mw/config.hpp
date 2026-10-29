@@ -23,6 +23,8 @@ enum class Mode : uint8_t {
 struct Upstream {
   std::string host;
   uint16_t port = 53;
+  bool tls = false;     // DNS-over-TLS (RFC 7858) instead of plain DNS
+  std::string tls_name; // the name its certificate must carry; empty: the certificate must list host instead
 
   bool operator==(const Upstream&) const = default;
 };
@@ -37,6 +39,7 @@ struct ListenAddress {
 struct Config {
   Mode mode = Mode::Forwarding;
   std::vector<Upstream> upstreams;         // must be non-empty in forwarding mode
+  std::filesystem::path upstream_ca_file;  // CAs that tls:// upstreams' certificates must chain to; empty: the system's
   std::filesystem::path records_file;      // empty means no local records
   std::size_t workers = 4;                 // 1-64
   std::size_t queue_capacity = 256;        // 1-100000
@@ -67,8 +70,13 @@ struct Config {
   std::filesystem::path admin_ui_dir = "gui"; // where index.html is served from
 };
 
-// 1.1.1.1, 1.1.1.1:53, [2606:4700::1111]:53 or a bare 2606:4700::1111. port defaults to 53
+// 1.1.1.1, 1.1.1.1:53, [2606:4700::1111]:53 or a bare 2606:4700::1111. port defaults to 53.
+// tls://1.1.1.1#cloudflare-dns.com is DNS-over-TLS, port 853 unless given, the certificate checked against the
+// name after '#' (or, without one, against the IP address)
 std::expected<Upstream, std::string> parse_upstream(std::string_view s);
+
+// the form parse_upstream reads: "1.1.1.1:53", "tls://[2606:4700::1111]:853#cloudflare-dns.com"
+std::string upstream_text(const Upstream& u);
 
 // same forms as parse_upstream, port defaults to 853
 std::expected<ListenAddress, std::string> parse_listen(std::string_view s);

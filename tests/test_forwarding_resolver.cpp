@@ -124,6 +124,45 @@ TEST(ForwardingResolver, IgnoresRepliesThatDontMatchTheQuestion) {
     EXPECT_EQ(r.answer[0].rdata, (std::vector<uint8_t>{ 192, 0, 2, 1 }));
 }
 
+TEST(ForwardingResolver, MalformedRepliesAreIgnored) {
+    FakeDnsServer upstream([](const types::DnsQuery& q, bool) {
+        // junk, a header with nothing after it, then the real answer
+        std::vector<std::vector<std::byte>> out{ std::vector<std::byte>(5, std::byte{ 0xAB }), std::vector<std::byte>(12, std::byte{ 0 }) };
+        out.push_back(FakeDnsServer::reply(q, support::result(Rcode::NoError, { support::a_record(q.name, "192.0.2.7") }))[0]);
+        return out;
+    });
+    backend::Cache cache;
+    backend::ForwardingResolver resolver({ endpoint(upstream) }, cache, 500ms);
+    const auto r = ask(resolver, "example.com.");
+    ASSERT_EQ(r.answer.size(), 1u);
+    EXPECT_EQ(r.answer[0].rdata, (std::vector<uint8_t>{ 192, 0, 2, 7 }));
+}
+
+TEST(ForwardingResolver, OnlyMalformedRepliesGiveServFail) {
+    FakeDnsServer upstream([](const types::DnsQuery& q, bool) {
+        auto cut = FakeDnsServer::reply(q, support::result(Rcode::NoError, { support::a_record(q.name, "192.0.2.7") }))[0];
+        cut.resize(cut.size() - 3); // the answer's address cut short
+        return std::vector<std::vector<std::byte>>{ std::vector<std::byte>(3, std::byte{ 0xFF }), cut };
+    });
+    backend::Cache cache;
+    backend::ForwardingResolver resolver({ endpoint(upstream) }, cache, 200ms);
+    const auto r = ask(resolver, "example.com.");
+    EXPECT_EQ(r.rcode, Rcode::ServFail);
+    EXPECT_EQ(r.served_by, "no upstream answered");
+    EXPECT_EQ(cache.stats().rrsets, 0u); // nothing from the broken replies was cached
+}
+
+TEST(ForwardingResolver, MalformedTcpReplyGivesServFail) {
+    FakeDnsServer upstream([](const types::DnsQuery& q, bool tcp) {
+        if (!tcp) return FakeDnsServer::truncated(q);
+        return std::vector<std::vector<std::byte>>{ std::vector<std::byte>(20, std::byte{ 0x11 }) };
+    });
+    backend::Cache cache;
+    backend::ForwardingResolver resolver({ endpoint(upstream) }, cache, 300ms);
+    EXPECT_EQ(ask(resolver, "big.example.").rcode, Rcode::ServFail);
+    EXPECT_EQ(upstream.tcp_queries(), 1);
+}
+
 TEST(ForwardingResolver, TruncatedReplyIsRetriedOverTcp) {
     FakeDnsServer upstream([](const types::DnsQuery& q, bool tcp) {
         if (!tcp) return FakeDnsServer::truncated(q);

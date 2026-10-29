@@ -494,6 +494,25 @@ TEST(DnsMessageUpstream, EncodedQueryParsesBack) {
     EXPECT_TRUE(query->has_edns);
 }
 
+TEST(DnsMessageUpstream, QueryIsNotPaddedByDefault) {
+    const auto wire  = types::encode_query(kId, types::DomainName("example.com."), RecordType::A, types::RecordClass::IN, true);
+    const auto query = types::parse_query(wire);
+    ASSERT_TRUE(query.has_value());
+    EXPECT_FALSE(query->wants_padding);
+}
+
+TEST(DnsMessageUpstream, PaddedQueriesAllHaveTheBlockSize) {
+    // names of very different lengths must not be told apart by size
+    for (const char* name : { "a.io.", "example.com.", "a-much-longer-name-that-changes-the-message-size.example.org." }) {
+        const auto wire = types::encode_query(kId, types::DomainName(name), RecordType::A, types::RecordClass::IN, true, types::kQueryPaddingBlock);
+        EXPECT_EQ(wire.size(), types::kQueryPaddingBlock) << name;
+        const auto query = types::parse_query(wire);
+        ASSERT_TRUE(query.has_value()) << name;
+        EXPECT_TRUE(query->wants_padding) << name; // also asks the server to pad its reply (RFC 7830)
+        EXPECT_EQ(query->name, name);
+    }
+}
+
 TEST(DnsMessageUpstream, QueryWithoutRecursionDesired) {
     const auto wire = types::encode_query(kId, types::DomainName("example.com."), RecordType::A, types::RecordClass::IN, false);
     EXPECT_EQ(u16_at(wire, 2), 0x0000);

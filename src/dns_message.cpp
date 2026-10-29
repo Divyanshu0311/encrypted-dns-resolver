@@ -246,7 +246,8 @@ namespace types {
             return true;
         }
 
-        void write_opt_record(Writer& writer, bool pad) {
+        // pad_block 0: no Padding option
+        void write_opt_record(Writer& writer, std::size_t pad_block) {
             writer.u8(0);
             writer.u16(kTypeOpt);
             writer.u16(kEdnsUdpSize);
@@ -255,8 +256,8 @@ namespace types {
             writer.u16(0);
 
             const std::size_t unpadded = writer.size() + 2 + 4;
-            const std::size_t padding  = (kPaddingBlockSize - unpadded % kPaddingBlockSize) % kPaddingBlockSize;
-            if (!pad || unpadded + padding > kMaxMessageSize) {
+            const std::size_t padding  = pad_block == 0 ? 0 : (pad_block - unpadded % pad_block) % pad_block;
+            if (pad_block == 0 || unpadded + padding > kMaxMessageSize) {
                 writer.u16(0);
                 return;
             }
@@ -312,7 +313,7 @@ namespace types {
                 }
             }
             if (query.has_edns) {
-                write_opt_record(writer, query.wants_padding);
+                write_opt_record(writer, query.wants_padding ? kPaddingBlockSize : 0);
             }
             if (writer.size() > kMaxMessageSize) {
                 return std::nullopt;
@@ -550,7 +551,8 @@ namespace types {
         return encode_error(*error.id, error.rcode);
     }
 
-    std::vector<std::byte> encode_query(uint16_t id, const DomainName& name, RecordType type, RecordClass rclass, bool recursion_desired) {
+    std::vector<std::byte> encode_query(uint16_t id, const DomainName& name, RecordType type, RecordClass rclass, bool recursion_desired,
+                                        std::size_t pad_block) {
         Writer writer;
         writer.u16(id);
         writer.u16(recursion_desired ? kFlagRecursionDesired : 0);
@@ -563,7 +565,7 @@ namespace types {
         }
         writer.u16(static_cast<uint16_t>(type));
         writer.u16(static_cast<uint16_t>(rclass));
-        write_opt_record(writer, false);
+        write_opt_record(writer, pad_block);
         return writer.take();
     }
 

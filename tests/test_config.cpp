@@ -59,6 +59,48 @@ TEST(ParseUpstream, Rejects) {
   }
 }
 
+TEST(ParseUpstream, TlsDefaultsToPort853) {
+  const auto u = mw::parse_upstream("tls://1.1.1.1#cloudflare-dns.com");
+  ASSERT_TRUE(u.has_value()) << u.error();
+  EXPECT_SHOW_EQ(*u, (mw::Upstream{"1.1.1.1", 853, true, "cloudflare-dns.com"}));
+}
+
+TEST(ParseUpstream, TlsWithPortAndIpv6) {
+  const auto u = mw::parse_upstream("tls://[2606:4700::1111]:8853#Cloudflare-DNS.com.");
+  ASSERT_TRUE(u.has_value()) << u.error();
+  EXPECT_SHOW_EQ(*u, (mw::Upstream{"2606:4700::1111", 8853, true, "cloudflare-dns.com"}));
+}
+
+TEST(ParseUpstream, TlsWithoutANameChecksTheAddress) {
+  const auto u = mw::parse_upstream("tls://9.9.9.9");
+  ASSERT_TRUE(u.has_value()) << u.error();
+  EXPECT_SHOW_EQ(*u, (mw::Upstream{"9.9.9.9", 853, true, ""}));
+}
+
+TEST(ParseUpstream, RejectsBadTlsForms) {
+  for (const char* bad : {"1.1.1.1#dns.google", "tls://1.1.1.1#", "tls://1.1.1.1#bad name", "tls://1.1.1.1#1.2.3.4", "tls://1.1.1.1#a..b",
+                          "tls://dns.google", "tls://1.1.1.1:0#dns.google", "https://1.1.1.1"}) {
+    EXPECT_FALSE(mw::parse_upstream(bad).has_value()) << bad;
+  }
+}
+
+TEST(ParseUpstream, TextRoundTrips) {
+  for (const char* text : {"8.8.8.8:53", "[::1]:5353", "tls://1.1.1.1:853#cloudflare-dns.com", "tls://[2606:4700::1111]:853", "tls://9.9.9.9:853"}) {
+    const auto u = mw::parse_upstream(text);
+    ASSERT_TRUE(u.has_value()) << text;
+    EXPECT_SHOW_EQ(mw::upstream_text(*u), std::string(text));
+  }
+}
+
+TEST(ParseConfig, MixedUpstreamsAndCaFile) {
+  const auto cfg = mw::parse_config("upstreams = tls://1.1.1.1#cloudflare-dns.com, 8.8.8.8\nupstream_ca_file = /etc/ssl/certs/ca.pem\n");
+  ASSERT_TRUE(cfg.has_value()) << cfg.error();
+  ASSERT_SHOW_EQ(cfg->upstreams.size(), 2u);
+  EXPECT_TRUE(cfg->upstreams[0].tls);
+  EXPECT_FALSE(cfg->upstreams[1].tls);
+  EXPECT_SHOW_EQ(cfg->upstream_ca_file.string(), std::string("/etc/ssl/certs/ca.pem"));
+}
+
 // ---- parse_listen ----
 
 TEST(ParseListen, DefaultsToPort853) {
@@ -349,4 +391,7 @@ TEST(LoadConfig, ChecksTlsAndBlockedDomainsFilesExist) {
 
   const std::string no_domains = dir.write("d.conf", "mode = recursive\nblocked_domains_file = " + missing + "\n");
   EXPECT_SHOW_EQ(mw::load_config(no_domains).error(), "blocked_domains_file '" + missing + "' does not exist");
+
+  const std::string no_ca = dir.write("ca.conf", "mode = recursive\nupstream_ca_file = " + missing + "\n");
+  EXPECT_SHOW_EQ(mw::load_config(no_ca).error(), "upstream_ca_file '" + missing + "' does not exist");
 }

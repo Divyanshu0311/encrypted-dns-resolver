@@ -35,14 +35,17 @@ BlockPolicy block_policy(const Config& c) {
                      .max_entries = c.block_max_entries};
 }
 
-// fails open: a strike lost to an exception simply doesn't count
-void strike_and_log(BlockList& list, std::string_view ip, Offence offence, Ms duration) noexcept {
+// fails open: a strike lost to an exception simply doesn't count. true when it started a block
+bool strike_and_log(BlockList& list, std::string_view ip, Offence offence, Ms duration) noexcept {
   try {
-    if (list.strike(ip, offence))
+    if (list.strike(ip, offence)) {
       warn("blocking {} for {} ms: too many {}", ip, duration.count(), offence == Offence::RateLimited ? "rate-limited queries" : "protocol errors");
+      return true;
+    }
   }
   catch (...) {
   }
+  return false;
 }
 
 } // namespace
@@ -97,12 +100,14 @@ void Middleware::submit(std::string_view name, RecordType type, ClientInfo clien
     }
     // the front end should have dropped a blocked source already; this covers callers that didn't
     if (is_blocked(client.address)) {
+      metrics_.on_blocked_query();
       reply_now(cb, Rcode::Refused, "client blocked");
       return;
     }
     if (!limiter_.allow(client.address)) {
       metrics_.on_rate_limited();
-      strike_and_log(blocklist_, client.address, Offence::RateLimited, config_.block_duration);
+      if (strike_and_log(blocklist_, client.address, Offence::RateLimited, config_.block_duration))
+        metrics_.on_block_started();
       reply_now(cb, Rcode::Refused, "rate limited");
       return;
     }
@@ -169,7 +174,29 @@ bool Middleware::is_blocked(std::string_view ip) const noexcept {
 }
 
 void Middleware::report_abuse(std::string_view ip) noexcept {
-  strike_and_log(blocklist_, ip, Offence::Protocol, config_.block_duration);
+  if (strike_and_log(blocklist_, ip, Offence::Protocol, config_.block_duration))
+    metrics_.on_block_started();
+}
+
+bool Middleware::unblock(std::string_view ip) noexcept {
+  try {
+    bool was = blocklist_.unblock(ip);
+    if (was)
+      info("unblocked {}", ip);
+    return was;
+  }
+  catch (...) {
+    return false;
+  }
+}
+
+std::size_t Middleware::blocked_sources() const noexcept {
+  try {
+    return blocklist_.blocked_count();
+  }
+  catch (...) {
+    return 0;
+  }
 }
 
 // wraps cb so its reply, whichever path below produces it, lands in the query log. cb is only
@@ -211,8 +238,11 @@ void Middleware::log_replies(std::string_view name, RecordType type, const Clien
   }
 }
 
-void Middleware::log_reply(std::string_view name, RecordType type, const ClientInfo& client, const ResolveResult& result) noexcept {
+void Middleware::record_domain_refusal(std::string_view name, RecordType type, const ClientInfo& client) noexcept {
+  metrics_.on_domain_refused();
+  metrics_.record_reply(Rcode::Refused, Ms{0});
   try {
+    const auto result = error_result(Rcode::Refused, "blocked domain");
     QueryLogEntry e;
     e.when = std::chrono::system_clock::now();
     e.client = client.address;

@@ -54,6 +54,9 @@ MetricsSnapshot Metrics::snapshot() const {
   s.timeouts = timeouts_.load(std::memory_order_relaxed);
   s.coalesced = coalesced_.load(std::memory_order_relaxed);
   s.resolver_exceptions = resolver_exceptions_.load(std::memory_order_relaxed);
+  s.blocked_queries = blocked_queries_.load(std::memory_order_relaxed);
+  s.blocks_started = blocks_started_.load(std::memory_order_relaxed);
+  s.domain_refusals = domain_refusals_.load(std::memory_order_relaxed);
   for (std::size_t i = 0; i < kRcodeSlots; i++)
     s.replies_by_rcode[i] = replies_by_rcode_[i].load(std::memory_order_relaxed);
   for (std::size_t i = 0; i < kLatencyBuckets; i++) {
@@ -76,6 +79,9 @@ std::string format_snapshot(const MetricsSnapshot& s) {
   out += std::format("timeouts            {}\n", s.timeouts);
   out += std::format("coalesced           {}\n", s.coalesced);
   out += std::format("resolver exceptions {}\n", s.resolver_exceptions);
+  out += std::format("blocked queries     {}\n", s.blocked_queries);
+  out += std::format("clients blocked     {}\n", s.blocks_started);
+  out += std::format("domains refused     {}\n", s.domain_refusals);
   out += std::format("replies             {}\n", s.total_replies);
   for (std::size_t i = 0; i < kRcodeSlots; i++)
     out += std::format("  {:<17} {}\n", kRcodeNames[i], s.replies_by_rcode[i]);

@@ -4,6 +4,7 @@
 #else
 #include <arpa/inet.h>
 #endif
+#include<cctype>
 #include<charconv>
 #include<format>
 #include<fstream>
@@ -36,6 +37,24 @@ std::optional<T> parse_number(std::string_view s) {
 bool is_ip(const std::string& host) {
   unsigned char buf[sizeof(in6_addr)];
   return inet_pton(AF_INET, host.c_str(), buf) == 1 || inet_pton(AF_INET6, host.c_str(), buf) == 1;
+}
+
+// a DNS name a certificate can be issued to: letters, digits and '-', in dot separated labels
+bool is_host_name(std::string_view name) {
+  if (name.empty() || name.size() > 253 || is_ip(std::string(name)))
+    return false;
+  std::size_t label = 0;
+  for (char c : name) {
+    if (c == '.') {
+      if (label == 0)
+        return false;
+      label = 0;
+      continue;
+    }
+    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-') || ++label > 63)
+      return false;
+  }
+  return label > 0;
 }
 
 // parses an integer and checks lo <= value <= hi
@@ -150,6 +169,9 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
     if (!list)
       return std::unexpected(list.error());
     cfg.upstreams = std::move(*list);
+  }
+  else if (key == "upstream_ca_file") {
+    cfg.upstream_ca_file = std::string(value);
   }
   else if (key == "records_file") {
     cfg.records_file = std::string(value);
@@ -299,10 +321,38 @@ std::expected<void, std::string> apply(Config& cfg, std::string_view key, std::s
 } // namespace
 
 std::expected<Upstream, std::string> parse_upstream(std::string_view s) {
-  auto hp = parse_host_port(s, 53, "upstream");
+  s = trim(s);
+  const std::string_view whole = s;
+  Upstream u;
+  if (s.starts_with("tls://")) {
+    u.tls = true;
+    s.remove_prefix(6);
+    if (auto hash = s.find('#'); hash != std::string_view::npos) {
+      std::string name = utils::lower(std::string(trim(s.substr(hash + 1))));
+      if (name.ends_with('.'))
+        name.pop_back();
+      if (!is_host_name(name))
+        return std::unexpected(std::format("upstream '{}' has an invalid certificate name (after '#')", whole));
+      u.tls_name = std::move(name);
+      s = s.substr(0, hash);
+    }
+  }
+  else if (s.find('#') != std::string_view::npos) {
+    return std::unexpected(std::format("upstream '{}': a certificate name (#name) needs tls://", whole));
+  }
+  auto hp = parse_host_port(s, u.tls ? 853 : 53, "upstream");
   if (!hp)
     return std::unexpected(hp.error());
-  return Upstream{std::move(hp->host), hp->port};
+  u.host = std::move(hp->host);
+  u.port = hp->port;
+  return u;
+}
+
+std::string upstream_text(const Upstream& u) {
+  std::string out = u.host.find(':') != std::string::npos ? std::format("[{}]:{}", u.host, u.port) : std::format("{}:{}", u.host, u.port);
+  if (!u.tls)
+    return out;
+  return "tls://" + out + (u.tls_name.empty() ? "" : "#" + u.tls_name);
 }
 
 std::expected<ListenAddress, std::string> parse_listen(std::string_view s) {
@@ -379,6 +429,7 @@ std::expected<Config, std::string> load_config(const std::filesystem::path& path
 
   const std::pair<std::string_view, const std::filesystem::path*> files[] = {
       {"records_file", &cfg->records_file},
+      {"upstream_ca_file", &cfg->upstream_ca_file},
       {"tls_cert", &cfg->tls_cert},
       {"tls_key", &cfg->tls_key},
       {"blocked_domains_file", &cfg->blocked_domains_file},

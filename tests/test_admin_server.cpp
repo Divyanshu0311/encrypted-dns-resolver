@@ -1,8 +1,10 @@
 #include "mw/admin_server.hpp"
 
+#include "support/fake_dot_server.hpp"
 #include "support/fakes.hpp"
 #include "support/show.hpp"
 #include "support/temp_dir.hpp"
+#include "support/tls_cert.hpp"
 
 #include <gtest/gtest.h>
 
@@ -163,7 +165,128 @@ TEST_F(AdminServerTest, LoadTestRunsToTheEnd) {
   EXPECT_FALSE(contains(http(port, "GET", "/api/queries?after=0").body, "198.18."));
 }
 
+TEST_F(AdminServerTest, TrafficRunsUntilStopped) {
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/traffic?rate=2000&names=popular").status, 200);
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/traffic?rate=2000").status, 409); // one at a time
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  http(port, "POST", "/api/traffic/stop");
+  for (int i = 0; i < 100 && contains(http(port, "GET", "/api/metrics").body, "\"traffic\":{\"running\":true"); i++)
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  auto m = http(port, "GET", "/api/metrics").body;
+  EXPECT_TRUE(contains(m, "\"traffic\":{\"running\":false")) << m;
+  EXPECT_FALSE(contains(m, "\"names\":\"popular\",\"sent\":0,")) << m; // it did send something
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/traffic?names=everything").status, 400);
+}
+
+TEST_F(AdminServerTest, StubServerCannotSwitchResolver) {
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/resolver?id=recursive").status, 400);
+}
+
+TEST_F(AdminServerTest, AbuseValidatesItsInput) {
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/abuse?client=nobody").status, 400);
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/abuse?seconds=0").status, 400);
+}
+
 TEST_F(AdminServerTest, FaultsSwitchIsShared) {
   EXPECT_SHOW_EQ(http(port, "POST", "/api/faults?fail_rate=0.25").status, 200);
   EXPECT_SHOW_EQ(shared.faults->fail_rate.load(), 0.25);
+}
+
+// a rate limit low enough to trip in a few hundred milliseconds
+class AdminAbuseTest : public AdminServerTest {
+  protected:
+    void SetUp() override {
+      cfg.rate_limit_qps = 50;
+      cfg.rate_limit_burst = 20;
+      cfg.block_rate_limit_strikes = 10;
+      cfg.block_duration = mw::Ms(60000);
+      AdminServerTest::SetUp();
+    }
+};
+
+TEST_F(AdminAbuseTest, FloodingClientGetsBlockedAndCanBeUnblocked) {
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/abuse?client=203.0.113.9&rate=1000&seconds=1").status, 200);
+  // the client is over its limit within the first second
+  for (int i = 0; i < 60 && !contains(http(port, "GET", "/api/metrics").body, "\"blocked_now\":true"); i++)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  auto m = http(port, "GET", "/api/metrics").body;
+  EXPECT_TRUE(contains(m, "\"blocked_now\":true")) << m;
+  EXPECT_TRUE(contains(m, "\"blocks_started\":1")) << m;
+  EXPECT_TRUE(contains(m, "\"blocked_sources\":1")) << m;
+  EXPECT_FALSE(contains(m, "\"first_blocked_s\":null")) << m;
+
+  // another client is not affected
+  auto other = http(port, "GET", "/api/lookup?name=www.example.com&via=server");
+  EXPECT_TRUE(contains(other.body, "\"rcode\":\"NOERROR\"")) << other.body;
+
+  auto u = http(port, "POST", "/api/unblock?client=203.0.113.9");
+  EXPECT_TRUE(contains(u.body, "\"was_blocked\":true")) << u.body;
+  EXPECT_TRUE(contains(http(port, "GET", "/api/metrics").body, "\"blocked_sources\":0"));
+}
+
+TEST_F(AdminAbuseTest, ClientUnderTheLimitIsNeverBlocked) {
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/abuse?client=203.0.113.10&rate=20&seconds=1").status, 200);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+  auto m = http(port, "GET", "/api/metrics").body;
+  EXPECT_TRUE(contains(m, "\"blocked_now\":false")) << m;
+  EXPECT_TRUE(contains(m, "\"rate_limited\":0")) << m;
+}
+
+// a DNS-over-TLS upstream signed by a test CA the admin page's TLS client trusts
+class AdminTlsTest : public AdminServerTest {
+  protected:
+    mw::test::TestCa ca{dir};
+    support::FakeDotServer upstream{ca.issue("upstream"), [](const types::DnsQuery& q) {
+                                      return support::FakeDotServer::reply(q, support::result(mw::Rcode::NoError, {support::a_record(q.name, "192.0.2.80")}));
+                                    }};
+
+    void SetUp() override {
+      ASSERT_TRUE(shared.upstream_tls->configure(ca.cert_file()).has_value());
+      cfg.upstreams = {mw::Upstream{"127.0.0.1", upstream.port(), true, "dns.test"}};
+      AdminServerTest::SetUp();
+    }
+
+    std::string probe(const std::string& name) {
+      return http(port, "POST", "/api/tls/probe?ip=127.0.0.1&port=" + std::to_string(upstream.port()) + "&name=" + name).body;
+    }
+};
+
+TEST_F(AdminTlsTest, ProbeShowsAnAcceptedCertificate) {
+  auto r = probe("dns.test");
+  EXPECT_TRUE(contains(r, "\"verified\":true")) << r;
+  EXPECT_TRUE(contains(r, "\"protocol\":\"TLSv1.3\"")) << r;
+  EXPECT_TRUE(contains(r, "\"subject\":\"CN=dns.test\"")) << r;
+  EXPECT_TRUE(contains(r, "\"issuer\":\"CN=Test CA\"")) << r;
+  EXPECT_TRUE(contains(r, "\"checked_against\":\"name dns.test\"")) << r;
+}
+
+TEST_F(AdminTlsTest, ProbeShowsARejectedCertificate) {
+  auto r = probe("bank.example");
+  EXPECT_TRUE(contains(r, "\"connected\":true")) << r;
+  EXPECT_TRUE(contains(r, "\"verified\":false")) << r;
+  EXPECT_TRUE(contains(r, "hostname mismatch")) << r;
+  auto m = http(port, "GET", "/api/metrics").body;
+  EXPECT_TRUE(contains(m, "\"upstream_tls\":{")) << m;
+  EXPECT_TRUE(contains(m, "\"rejected\":1")) << m;
+  EXPECT_TRUE(contains(m, "\"last_rejection\":\"certificate rejected: hostname mismatch\"")) << m;
+}
+
+TEST_F(AdminTlsTest, LookupThroughATlsUpstream) {
+  auto id = "dot:127.0.0.1:" + std::to_string(upstream.port());
+  auto s = http(port, "GET", "/api/status").body;
+  EXPECT_TRUE(contains(s, "\"id\":\"" + id + "\"")) << s;
+  EXPECT_TRUE(contains(s, "tls://127.0.0.1:" + std::to_string(upstream.port()) + "#dns.test")) << s;
+  auto r = http(port, "GET", "/api/lookup?name=www.example.com&via=" + id).body;
+  EXPECT_TRUE(contains(r, "192.0.2.80")) << r;
+  EXPECT_TRUE(contains(r, "(dns.test) over TLS")) << r;
+  auto m = http(port, "GET", "/api/metrics").body;
+  EXPECT_TRUE(contains(m, "\"queries\":1,\"handshakes\":1")) << m;
+  EXPECT_TRUE(contains(m, "\"last_subject\":\"CN=dns.test\"")) << m;
+}
+
+TEST_F(AdminTlsTest, ProbeValidatesItsInput) {
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/tls/probe?ip=dns.google").status, 400);
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/tls/probe?ip=127.0.0.1&port=0").status, 400);
+  EXPECT_SHOW_EQ(http(port, "POST", "/api/tls/probe?ip=127.0.0.1&name=a%20b").status, 400);
+  EXPECT_SHOW_EQ(http(port, "GET", "/api/tls/probe?ip=127.0.0.1").status, 404);
 }

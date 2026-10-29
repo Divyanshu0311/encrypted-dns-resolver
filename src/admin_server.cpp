@@ -1,5 +1,6 @@
 #include "mw/admin_server.hpp"
 #include<algorithm>
+#include<array>
 #include<atomic>
 #include<cctype>
 #include<cerrno>
@@ -11,6 +12,7 @@
 #include<filesystem>
 #include<format>
 #include<fstream>
+#include<functional>
 #include<future>
 #include<map>
 #include<mutex>
@@ -31,6 +33,7 @@
 #include "IP.hpp"
 #include "backend/ForwardingResolver.hpp"
 #include "backend/RecursiveResolver.hpp"
+#include "backend/Upstream.hpp"
 #include "mw/logger.hpp"
 
 namespace mw {
@@ -425,26 +428,6 @@ std::string param(const Request& req, const std::string& key, std::string fallba
   return it == req.params.end() || it->second.empty() ? fallback : it->second;
 }
 
-// waits for a known number of callbacks, which may run on any thread
-class Countdown {
-  private:
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    uint64_t left_;
-
-  public:
-    explicit Countdown(uint64_t n) : left_(n) {}
-    void tick() {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (left_ > 0 && --left_ == 0)
-        cv_.notify_all();
-    }
-    bool wait_for(std::chrono::milliseconds timeout) {
-      std::unique_lock<std::mutex> lock(mutex_);
-      return cv_.wait_for(lock, timeout, [this] { return left_ == 0; });
-    }
-};
-
 // a resolver the lookup test can pick directly, outside the middleware, with a cache of its own so
 // "cold" and "warm" mean the same thing for every resolver being compared
 struct Lab {
@@ -469,6 +452,41 @@ struct LoadState {
   std::vector<double> latencies;
 };
 
+// the Traffic test: a steady stream of queries until it is stopped
+struct TrafficState {
+  bool running = false;
+  double rate = 0;
+  std::string names;
+  uint64_t sent = 0;
+  uint64_t done = 0;
+  uint64_t dropped = 0; // not sent: too many were still unanswered
+  SteadyClock::time_point started{};
+  SteadyClock::time_point finished{};
+  std::map<std::string, uint64_t> served_by;
+};
+
+// the Abuse test: one client sending at a steady rate for a few seconds
+struct AbuseState {
+  bool running = false;
+  std::string client;
+  double rate = 0;
+  uint64_t seconds = 0;
+  uint64_t sent = 0;
+  SteadyClock::time_point started{};
+  SteadyClock::time_point finished{};
+  std::vector<std::array<uint64_t, 3>> timeline; // per second: answered, rate limited, refused as blocked
+  double first_blocked_s = -1;
+};
+
+// "upstream 1.1.1.1:53" and "upstream 8.8.8.8:53" count as one, and so do the recursive variants
+std::string served_label(const ResolveResult& r) {
+  if (r.served_by.starts_with("upstream "))
+    return r.served_by.ends_with(" over TLS") ? "upstream over TLS" : "upstream";
+  if (r.served_by.starts_with("recursive"))
+    return "recursive";
+  return r.served_by.empty() ? "?" : r.served_by;
+}
+
 } // namespace
 
 struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
@@ -492,25 +510,40 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
   LoadState load;
   std::atomic<bool> cancel_load{false};
 
+  std::mutex traffic_mutex;
+  TrafficState traffic;
+  std::atomic<bool> cancel_traffic{false};
+
+  std::mutex abuse_mutex;
+  AbuseState abuse;
+  std::atomic<bool> cancel_abuse{false};
+
+  // most queries a paced test keeps unanswered at once
+  static constexpr uint64_t kMaxInFlight = 20000;
+
   Impl(Config cfg, Middleware& m, const Admission& a, ResolverShared s) : config(std::move(cfg)), middleware(m), admission(a), shared(std::move(s)) {
+    // make_factory configured it, unless the middleware runs a stub (tests, load_gen)
+    if (!shared.upstream_tls->configured())
+      if (auto ok = shared.upstream_tls->configure(config.upstream_ca_file); !ok)
+        warn("admin page: DNS-over-TLS upstreams will fail: {}", ok.error());
     std::vector<backend::Endpoint> upstreams;
     for (const auto& u : config.upstreams) {
       try {
-        upstreams.push_back({types::IP(u.host), u.port});
+        upstreams.push_back({types::IP(u.host), u.port, u.tls ? shared.upstream_tls : nullptr, u.tls_name});
       }
       catch (const std::runtime_error&) {
       }
     }
-    for (const char* extra : {"1.1.1.1", "8.8.8.8", "9.9.9.9"}) {
-      backend::Endpoint e{types::IP(std::string(extra)), 53};
-      if (std::ranges::none_of(upstreams, [&](const auto& u) { return u.address == e.address && u.port == e.port; }))
-        upstreams.push_back(e);
+    for (auto& e : public_upstreams(shared.upstream_tls)) {
+      if (std::ranges::none_of(upstreams, [&](const auto& u) { return upstream_id(u) == upstream_id(e); }))
+        upstreams.push_back(std::move(e));
     }
     for (const auto& u : upstreams) {
       auto lab = std::make_unique<Lab>();
-      lab->id = std::format("upstream:{}:{}", std::string(u.address), u.port);
-      lab->label = std::format("Forward to {}", std::string(u.address));
-      lab->resolver = std::make_unique<backend::ForwardingResolver>(std::vector{u}, *lab->cache, Ms(1500));
+      lab->id = upstream_id(u);
+      lab->label = "Forward to " + upstream_label(u);
+      // a cold TLS upstream needs the TCP and TLS handshakes before the question
+      lab->resolver = std::make_unique<backend::ForwardingResolver>(std::vector{u}, *lab->cache, Ms(u.tls ? 3000 : 1500));
       labs.push_back(std::move(lab));
     }
     auto lab = std::make_unique<Lab>();
@@ -597,12 +630,28 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
       return start_load(req);
     if (req.path == "/api/load" && get)
       return json_response(load_json());
-    if (req.path == "/api/flood" && post)
-      return flood(req);
+    if (req.path == "/api/traffic" && post)
+      return start_traffic(req);
+    if (req.path == "/api/traffic/stop" && post) {
+      cancel_traffic = true;
+      return json_response(traffic_json());
+    }
+    if (req.path == "/api/abuse" && post)
+      return start_abuse(req);
+    if (req.path == "/api/abuse/stop" && post) {
+      cancel_abuse = true;
+      return json_response(abuse_json());
+    }
+    if (req.path == "/api/unblock" && post)
+      return unblock(req);
+    if (req.path == "/api/resolver" && post)
+      return switch_resolver(req);
     if (req.path == "/api/faults" && post)
       return faults(req);
     if (req.path == "/api/cache/flush" && post)
       return flush();
+    if (req.path == "/api/tls/probe" && post)
+      return tls_probe(req);
     if (req.path.starts_with("/api/"))
       return error_response(get || post ? 404 : 405, "no such endpoint");
     if (get)
@@ -630,13 +679,14 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
   std::string status_json() {
     std::vector<std::string> upstreams, lab_items;
     for (const auto& u : config.upstreams)
-      upstreams.push_back(json_string(std::format("{}:{}", u.host, u.port)));
+      upstreams.push_back(json_string(upstream_text(u)));
     for (const auto& lab : labs)
       lab_items.push_back(JsonObject().str("id", lab->id).str("label", lab->label).done());
     auto uptime = std::chrono::duration_cast<std::chrono::seconds>(SysClock::now() - started_at).count();
     return JsonObject()
         .str("mode", config.mode == Mode::Forwarding ? "forwarding" : "recursive")
         .raw("upstreams", json_array(upstreams))
+        .str("upstream_ca_file", config.upstream_ca_file.string())
         .str("records_file", config.records_file.string())
         .str("blocked_domains_file", config.blocked_domains_file.string())
         .integer("blocked_domains", admission.blocked_count())
@@ -653,7 +703,24 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
         .str("listen", std::format("{}:{}", config.listen.host, config.listen.port))
         .integer("uptime_s", static_cast<uint64_t>(uptime))
         .raw("labs", json_array(lab_items))
+        .raw("resolvers", resolvers_json())
+        .str("active_resolver", active_resolver().id)
         .done();
+  }
+
+  std::string resolvers_json() {
+    std::vector<std::string> items;
+    for (const auto& c : shared.resolvers->choices)
+      items.push_back(JsonObject().str("id", c.id).str("label", c.label).done());
+    return json_array(items);
+  }
+
+  // empty id and label when the server runs a stub (tests, load_gen)
+  ResolverChoice active_resolver() {
+    const auto& choices = shared.resolvers->choices;
+    if (choices.empty())
+      return {};
+    return choices[std::min(shared.resolvers->active.load(), choices.size() - 1)];
   }
 
   std::string metrics_json() {
@@ -699,10 +766,69 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
         .raw("rcodes", rcodes.done())
         .raw("latency", JsonObject().num("p50_ms", s.p50_ms).num("p95_ms", s.p95_ms).num("p99_ms", s.p99_ms).raw("buckets", json_array(buckets)).done())
         .raw("cache", JsonObject().integer("rrsets", c.rrsets).integer("records", c.records).integer("hits", c.hits).integer("misses", c.misses).done())
+        .integer("blocked_queries", s.blocked_queries)
+        .integer("blocks_started", s.blocks_started)
+        .integer("domain_refusals", s.domain_refusals)
+        .integer("blocked_sources", middleware.blocked_sources())
         .raw("workers", json_array(workers))
         .num("fault_rate", shared.faults->fail_rate.load())
+        .str("active_resolver", active_resolver().id)
         .raw("load", load_json())
+        .raw("traffic", traffic_json())
+        .raw("abuse", abuse_json())
+        .raw("upstream_tls", upstream_tls_json())
         .done();
+  }
+
+  // the evidence that DNS-over-TLS upstreams have their certificates checked
+  std::string upstream_tls_json() {
+    auto t = shared.upstream_tls->stats();
+    return JsonObject()
+        .integer("queries", t.queries)
+        .integer("handshakes", t.handshakes)
+        .integer("reused", t.reused)
+        .integer("rejected", t.rejected)
+        .integer("failed", t.failed)
+        .str("last_peer", t.last_peer)
+        .str("last_subject", t.last_subject)
+        .str("last_issuer", t.last_issuer)
+        .str("last_rejected_peer", t.last_rejected_peer)
+        .str("last_rejection", t.last_rejection)
+        .done();
+  }
+
+  // one TLS handshake with ip:port, the certificate checked against name (or, without one, the IP address)
+  Response tls_probe(const Request& req) {
+    backend::Endpoint e{types::IP("127.0.0.1"), 853, shared.upstream_tls, ""};
+    try {
+      e.address = types::IP(param(req, "ip"));
+    }
+    catch (const std::exception&) {
+      return error_response(400, "ip must be an IPv4 or IPv6 address");
+    }
+    auto port = number_param(req, "port", 853, 1, 65535);
+    if (!port)
+      return error_response(400, "port must be between 1 and 65535");
+    e.port = static_cast<uint16_t>(*port);
+    e.tls_name = utils::lower(param(req, "name"));
+    if (!std::ranges::all_of(e.tls_name, [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-'; }))
+      return error_response(400, "name must be a host name");
+
+    auto p = shared.upstream_tls->probe(e, Ms(3000));
+    info("admin page TLS probe of {}: {}", p.peer, p.verified ? "certificate accepted" : p.error);
+    return json_response(JsonObject()
+                             .str("peer", p.peer)
+                             .str("checked_against", e.tls_name.empty() ? "IP address " + std::string(e.address) : "name " + e.tls_name)
+                             .boolean("connected", p.connected)
+                             .boolean("verified", p.verified)
+                             .str("error", p.error)
+                             .str("protocol", p.protocol)
+                             .str("cipher", p.cipher)
+                             .str("subject", p.subject)
+                             .str("issuer", p.issuer)
+                             .str("not_after", p.not_after)
+                             .num("handshake_ms", p.handshake_ms)
+                             .done());
   }
 
   Response queries(const Request& req) {
@@ -757,12 +883,16 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
     return json_response(result_json(std::string(dn), *type, (*lab)->label, result, ms));
   }
 
+  std::string server_label() {
+    auto active = active_resolver();
+    return active.label.empty() ? "This server" : "This server: " + active.label;
+  }
+
   // the same path a DNS-over-TLS query takes after the front end has decoded it
   Response through_middleware(const std::string& name, RecordType type) {
     if (admission.refuses(types::DnsQuery{0, true, name, type, false, false})) {
-      const auto refused = error_result(Rcode::Refused, "blocked domain");
-      middleware.log_reply(name, type, ClientInfo{"127.0.0.1", 0, Transport::Tcp}, refused);
-      return json_response(result_json(name, type, "this server", refused, 0));
+      middleware.record_domain_refusal(name, type, ClientInfo{"127.0.0.1", 0, Transport::Tcp});
+      return json_response(result_json(name, type, server_label(), error_result(Rcode::Refused, "blocked domain"), 0));
     }
 
     auto promise = std::make_shared<std::promise<ResolveResult>>();
@@ -772,7 +902,7 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
     if (future.wait_for(config.request_timeout + Ms(2000)) != std::future_status::ready)
       return error_response(504, "no answer from the middleware");
     double ms = std::chrono::duration<double, std::milli>(SteadyClock::now() - start).count();
-    return json_response(result_json(name, type, "this server", future.get(), ms));
+    return json_response(result_json(name, type, server_label(), future.get(), ms));
   }
 
   std::string load_json() {
@@ -871,9 +1001,7 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
           std::lock_guard<std::mutex> lock(self->load_mutex);
           self->load.done++;
           self->load.rcodes[rcode_name(r.rcode)]++;
-          // "upstream 1.1.1.1:53" and "upstream 8.8.8.8:53" are counted as one
-          std::string label = r.served_by.starts_with("upstream ") ? "upstream" : r.served_by.starts_with("recursive") ? "recursive" : r.served_by;
-          self->load.served_by[label.empty() ? "?" : label]++;
+          self->load.served_by[served_label(r)]++;
           self->load.latencies.push_back(ms);
         }
         std::lock_guard<std::mutex> lock(window->mutex);
@@ -889,56 +1017,244 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
     load.finished = SteadyClock::now();
   }
 
-  Response flood(const Request& req) {
+  // calls send(i, done) `rate` times a second until cancel is set or limit has passed (zero: no limit), then
+  // waits for every done(). a query that would put more than kMaxInFlight unanswered is dropped instead, so a
+  // slow upstream can't pile up work. returns how many were dropped
+  uint64_t run_paced(double rate, SteadyClock::duration limit, const std::atomic<bool>& cancel,
+                     const std::function<void(uint64_t, std::function<void()>)>& send) {
+    struct Flight {
+      std::mutex mutex;
+      std::condition_variable cv;
+      uint64_t n = 0;
+    };
+    auto flight = std::make_shared<Flight>();
+    std::function<void()> done = [flight] {
+      std::lock_guard<std::mutex> lock(flight->mutex);
+      if (--flight->n == 0)
+        flight->cv.notify_all();
+    };
+
+    const auto start = SteadyClock::now();
+    uint64_t next = 0, dropped = 0;
+    while (!cancel.load() && !stopping.load()) {
+      auto elapsed = SteadyClock::now() - start;
+      if (limit.count() > 0 && elapsed >= limit)
+        break;
+      auto due = static_cast<uint64_t>(rate * std::chrono::duration<double>(elapsed).count()) + 1;
+      for (; next < due; next++) {
+        {
+          std::lock_guard<std::mutex> lock(flight->mutex);
+          if (flight->n >= kMaxInFlight) {
+            dropped++;
+            continue;
+          }
+          flight->n++;
+        }
+        send(next, done);
+      }
+      std::this_thread::sleep_for(Ms(5));
+    }
+    std::unique_lock<std::mutex> lock(flight->mutex);
+    flight->cv.wait(lock, [&] { return flight->n == 0; });
+    return dropped;
+  }
+
+  // runs fn on its own thread, counted as active so stop() waits for it
+  template<class Fn>
+  std::optional<Response> spawn(Fn fn) {
+    enter();
+    try {
+      std::thread([self = shared_from_this(), fn = std::move(fn)]() mutable {
+        fn(*self);
+        self->leave();
+      }).detach();
+    }
+    catch (const std::system_error& e) {
+      leave();
+      return error_response(500, e.what());
+    }
+    return std::nullopt;
+  }
+
+  std::string traffic_json() {
+    std::lock_guard<std::mutex> lock(traffic_mutex);
+    if (traffic.started == SteadyClock::time_point{})
+      return JsonObject().boolean("running", false).integer("sent", 0).done();
+    auto end = traffic.running ? SteadyClock::now() : traffic.finished;
+    return JsonObject()
+        .boolean("running", traffic.running)
+        .num("rate", traffic.rate)
+        .str("names", traffic.names)
+        .integer("sent", traffic.sent)
+        .integer("done", traffic.done)
+        .integer("dropped", traffic.dropped)
+        .num("elapsed_s", std::chrono::duration<double>(end - traffic.started).count())
+        .raw("served_by", json_counts(traffic.served_by))
+        .done();
+  }
+
+  Response start_traffic(const Request& req) {
+    auto rate = number_param(req, "rate", 500, 1, 20000);
+    std::string names = param(req, "names", "mixed");
+    if (!rate)
+      return error_response(400, "rate must be 1-20000 queries a second");
+    if (names != "popular" && names != "mixed" && names != "unique")
+      return error_response(400, "names must be popular, mixed or unique");
+    // every unique name is a real question to the upstreams: keep that polite
+    if (names == "unique")
+      *rate = std::min<uint64_t>(*rate, 200);
+    {
+      std::lock_guard<std::mutex> lock(traffic_mutex);
+      if (traffic.running)
+        return error_response(409, "traffic is already running");
+      traffic = TrafficState{};
+      traffic.running = true;
+      traffic.rate = static_cast<double>(*rate);
+      traffic.names = names;
+      traffic.started = SteadyClock::now();
+    }
+    cancel_traffic = false;
+    if (auto failed = spawn([rate = *rate, names](Impl& self) { self.run_traffic(static_cast<double>(rate), names); })) {
+      std::lock_guard<std::mutex> lock(traffic_mutex);
+      traffic.running = false;
+      return *failed;
+    }
+    return json_response(traffic_json());
+  }
+
+  void run_traffic(double rate, const std::string& names) {
+    std::mt19937_64 rng{std::random_device{}()};
+    // ten minutes at most, in case nobody presses Stop
+    auto dropped = run_paced(rate, std::chrono::minutes(10), cancel_traffic, [&](uint64_t i, std::function<void()> done) {
+      // mixed: one name in ten is new, the way real traffic is mostly names someone asked for recently
+      bool unique = names == "unique" || (names == "mixed" && rng() % 10 == 0);
+      std::string name = unique ? std::format("{:x}-{}.example.com", rng() & 0xFFFFFF, i) : kPopularNames[rng() % std::size(kPopularNames)];
+      std::string client = std::format("198.18.{}.{}", (i / 250) % 4, i % 250 + 1);
+      {
+        std::lock_guard<std::mutex> lock(traffic_mutex);
+        traffic.sent++;
+      }
+      middleware.submit(name, RecordType::A, ClientInfo{client, 0, Transport::Udp, true}, [self = shared_from_this(), done](ResolveResult r) {
+        {
+          std::lock_guard<std::mutex> lock(self->traffic_mutex);
+          self->traffic.done++;
+          self->traffic.served_by[served_label(r)]++;
+        }
+        done();
+      });
+    });
+    std::lock_guard<std::mutex> lock(traffic_mutex);
+    traffic.running = false;
+    traffic.dropped = dropped;
+    traffic.finished = SteadyClock::now();
+  }
+
+  std::string abuse_json() {
+    std::lock_guard<std::mutex> lock(abuse_mutex);
+    JsonObject o;
+    o.num("rate_limit_qps", config.rate_limit_qps)
+        .num("rate_limit_burst", config.rate_limit_burst)
+        .integer("block_rate_limit_strikes", config.block_rate_limit_strikes)
+        .integer("block_window_ms", static_cast<uint64_t>(config.block_window.count()))
+        .integer("block_duration_ms", static_cast<uint64_t>(config.block_duration.count()));
+    if (abuse.client.empty())
+      return o.boolean("running", false).done();
+    auto end = abuse.running ? SteadyClock::now() : abuse.finished;
+    double elapsed = std::chrono::duration<double>(end - abuse.started).count();
+    auto seconds_seen = std::min<std::size_t>(abuse.timeline.size(), static_cast<std::size_t>(elapsed) + 1);
+    std::vector<std::string> timeline;
+    for (std::size_t i = 0; i < seconds_seen; i++)
+      timeline.push_back(std::format("[{},{},{}]", abuse.timeline[i][0], abuse.timeline[i][1], abuse.timeline[i][2]));
+    o.boolean("running", abuse.running)
+        .str("client", abuse.client)
+        .num("rate", abuse.rate)
+        .integer("seconds", abuse.seconds)
+        .integer("sent", abuse.sent)
+        .num("elapsed_s", elapsed)
+        .boolean("blocked_now", middleware.is_blocked(abuse.client))
+        .raw("timeline", json_array(timeline));
+    if (abuse.first_blocked_s >= 0)
+      o.num("first_blocked_s", abuse.first_blocked_s);
+    else
+      o.raw("first_blocked_s", "null");
+    return o.done();
+  }
+
+  Response start_abuse(const Request& req) {
     std::string client = param(req, "client", "203.0.113.66");
-    auto count = number_param(req, "count", 2000, 1, 50000);
-    if (!count)
-      return error_response(400, "count must be 1-50000");
+    auto rate = number_param(req, "rate", 2000, 1, 20000);
+    auto seconds = number_param(req, "seconds", 10, 1, 60);
+    if (!rate || !seconds)
+      return error_response(400, "rate must be 1-20000 and seconds 1-60");
     try {
       types::IP check(client);
     }
     catch (const std::runtime_error&) {
       return error_response(400, "client must be an IP address");
     }
-
-    struct Tally {
-      std::mutex mutex;
-      std::map<std::string, uint64_t> rcodes;
-      std::map<std::string, uint64_t> served_by;
-    };
-    auto tally = std::make_shared<Tally>();
-    auto countdown = std::make_shared<Countdown>(*count);
-    const bool blocked_before = middleware.is_blocked(client);
-    auto start = SteadyClock::now();
-    for (uint64_t i = 0; i < *count; i++) {
-      middleware.submit("example.com", RecordType::A, ClientInfo{client, 0, Transport::Udp, true}, [tally, countdown](ResolveResult r) {
-        {
-          std::lock_guard<std::mutex> lock(tally->mutex);
-          tally->rcodes[rcode_name(r.rcode)]++;
-          std::string label = r.served_by.starts_with("upstream ") ? "upstream" : r.served_by;
-          tally->served_by[label.empty() ? "?" : label]++;
-        }
-        countdown->tick();
-      });
+    {
+      std::lock_guard<std::mutex> lock(abuse_mutex);
+      if (abuse.running)
+        return error_response(409, "an abuse test is already running");
+      abuse = AbuseState{};
+      abuse.running = true;
+      abuse.client = client;
+      abuse.rate = static_cast<double>(*rate);
+      abuse.seconds = *seconds;
+      abuse.timeline.assign(*seconds, {0, 0, 0});
+      abuse.started = SteadyClock::now();
     }
-    bool finished = countdown->wait_for(config.request_timeout + Ms(2000));
-    double ms = std::chrono::duration<double, std::milli>(SteadyClock::now() - start).count();
+    cancel_abuse = false;
+    if (auto failed = spawn([client, rate = *rate, seconds = *seconds](Impl& self) { self.run_abuse(client, static_cast<double>(rate), seconds); })) {
+      std::lock_guard<std::mutex> lock(abuse_mutex);
+      abuse.running = false;
+      return *failed;
+    }
+    return json_response(abuse_json());
+  }
 
-    std::lock_guard<std::mutex> lock(tally->mutex);
-    return json_response(JsonObject()
-                             .str("client", client)
-                             .integer("sent", *count)
-                             .boolean("all_answered", finished)
-                             .num("elapsed_ms", ms)
-                             .boolean("blocked_before", blocked_before)
-                             .boolean("blocked_after", middleware.is_blocked(client))
-                             .num("rate_limit_qps", config.rate_limit_qps)
-                             .num("rate_limit_burst", config.rate_limit_burst)
-                             .integer("block_rate_limit_strikes", config.block_rate_limit_strikes)
-                             .integer("block_duration_ms", static_cast<uint64_t>(config.block_duration.count()))
-                             .raw("rcodes", json_counts(tally->rcodes))
-                             .raw("served_by", json_counts(tally->served_by))
-                             .done());
+  void run_abuse(const std::string& client, double rate, uint64_t seconds) {
+    const auto start = SteadyClock::now();
+    run_paced(rate, std::chrono::seconds(seconds), cancel_abuse, [&](uint64_t, std::function<void()> done) {
+      const double at = std::chrono::duration<double>(SteadyClock::now() - start).count();
+      const auto slot = std::min<std::size_t>(static_cast<std::size_t>(at), seconds - 1);
+      {
+        std::lock_guard<std::mutex> lock(abuse_mutex);
+        abuse.sent++;
+      }
+      middleware.submit("example.com", RecordType::A, ClientInfo{client, 0, Transport::Udp, true}, [self = shared_from_this(), done, slot, at](ResolveResult r) {
+        {
+          std::lock_guard<std::mutex> lock(self->abuse_mutex);
+          const std::size_t kind = r.served_by == "rate limited" ? 1 : r.served_by == "client blocked" ? 2 : 0;
+          self->abuse.timeline[slot][kind]++;
+          if (kind == 2 && self->abuse.first_blocked_s < 0)
+            self->abuse.first_blocked_s = at;
+        }
+        done();
+      });
+    });
+    std::lock_guard<std::mutex> lock(abuse_mutex);
+    abuse.running = false;
+    abuse.finished = SteadyClock::now();
+  }
+
+  Response unblock(const Request& req) {
+    std::string client = param(req, "client", "203.0.113.66");
+    return json_response(JsonObject().str("client", client).boolean("was_blocked", middleware.unblock(client)).done());
+  }
+
+  Response switch_resolver(const Request& req) {
+    if (shared.resolvers->choices.empty())
+      return error_response(400, "this server's resolver can't be switched");
+    auto index = shared.resolvers->find(param(req, "id"));
+    if (!index)
+      return error_response(400, "unknown resolver");
+    shared.resolvers->active = *index;
+    // otherwise the next answers would still come from what the old resolver cached
+    shared.cache->clear();
+    const auto& choice = shared.resolvers->choices[*index];
+    info("admin page switched the resolver to {}", choice.label);
+    return json_response(JsonObject().str("active_resolver", choice.id).str("label", choice.label).done());
   }
 
   Response faults(const Request& req) {
@@ -1033,6 +1349,8 @@ void AdminServer::stop() {
   if (impl_->accept_thread.joinable())
     impl_->accept_thread.join();
   impl_->cancel_load = true;
+  impl_->cancel_traffic = true;
+  impl_->cancel_abuse = true;
   // requests reference the middleware, so they have to finish before it goes away
   std::unique_lock<std::mutex> lock(impl_->active_mutex);
   impl_->active_cv.wait(lock, [&] { return impl_->active == 0; });

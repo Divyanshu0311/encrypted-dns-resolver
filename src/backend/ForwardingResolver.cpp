@@ -46,7 +46,7 @@ namespace backend {
 
             preferred->store(index, std::memory_order_relaxed);
             if (response->result.rcode == types::Rcode::NoError) cache.update(chain_records(response->result.answer, name));
-            response->result.served_by = "upstream " + std::string(resolvers[index].address) + ":" + std::to_string(resolvers[index].port);
+            response->result.served_by = "upstream " + endpoint_label(resolvers[index]) + (resolvers[index].tls ? " over TLS" : "");
             return std::move(response->result);
         }
         types::ResolveResult failed;

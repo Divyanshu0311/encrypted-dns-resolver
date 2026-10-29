@@ -56,8 +56,13 @@ namespace types {
         ResolveResult result; // the OPT record is left out of additional
     };
 
-    // one question plus an OPT record advertising a 1232 byte UDP buffer
-    std::vector<std::byte> encode_query(uint16_t id, const DomainName& name, RecordType type, RecordClass rclass, bool recursion_desired);
+    // the block size RFC 8467 recommends for padding queries
+    inline constexpr std::size_t kQueryPaddingBlock = 128;
+
+    // one question plus an OPT record advertising a 1232 byte UDP buffer. pad_block > 0 adds an EDNS Padding
+    // option making the query a multiple of pad_block bytes, which also asks the server to pad its reply
+    std::vector<std::byte> encode_query(uint16_t id, const DomainName& name, RecordType type, RecordClass rclass, bool recursion_desired,
+                                        std::size_t pad_block = 0);
 
     // nullopt for a query or a malformed message. names inside the rdata of the RFC 1035 types (and SRV, RP, ...)
     // are decompressed, so the records can be copied into another message. rcodes above 11 come back as ServFail

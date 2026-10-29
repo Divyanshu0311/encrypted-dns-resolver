@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(dns_server LANGUAGES CXX)
+project(encrypted-dns-resolver LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -121,7 +121,7 @@ if(BUILD_TESTING)
         tests/test_zonefilesresolver.cpp
     )
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_sources(dns_tests PRIVATE tests/test_admin_server.cpp tests/test_dot_server.cpp)
+        target_sources(dns_tests PRIVATE tests/test_admin_server.cpp tests/test_dot_server.cpp tests/test_dot_upstream.cpp)
     endif()
     # tests/ on the include path so "support/*.hpp" resolve
     target_include_directories(dns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

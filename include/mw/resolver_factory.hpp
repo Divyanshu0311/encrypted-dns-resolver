@@ -4,9 +4,13 @@
 #include<memory>
 #include<optional>
 #include<random>
+#include<string>
+#include<string_view>
+#include<vector>
 
 #include "backend/Cache.hpp"
 #include "backend/Resolver.hpp"
+#include "backend/Upstream.hpp"
 #include "mw/config.hpp"
 #include "mw/types.hpp"
 
@@ -42,15 +46,48 @@ struct FaultInjection {
   std::atomic<double> fail_rate{0.0}; // chance a lookup is answered SERVFAIL without being tried
 };
 
-// what every worker's chain shares. the caller keeps copies to read cache stats or flip the faults
+// a resolver the server can be switched to at run time
+struct ResolverChoice {
+  std::string id;    // "configured", "upstream:8.8.8.8:53", "dot:8.8.8.8:853" or "recursive"
+  std::string label; // for the admin page
+};
+
+// which resolver every worker's chain asks after the records file. make_factory fills choices (once, before
+// any chain exists) and sets active from cfg.mode; the admin page moves active
+struct ResolverSwitch {
+  std::vector<ResolverChoice> choices;
+  std::atomic<std::size_t> active{0};
+
+  std::optional<std::size_t> find(std::string_view id) const;
+};
+
+// what every worker's chain shares. the caller keeps copies to read cache stats, flip the faults or switch resolver
 struct ResolverShared {
   std::shared_ptr<backend::Cache> cache = std::make_shared<backend::Cache>();
   std::shared_ptr<FaultInjection> faults = std::make_shared<FaultInjection>();
+  std::shared_ptr<ResolverSwitch> resolvers = std::make_shared<ResolverSwitch>();
+  // every DNS-over-TLS upstream connects through this one, so the admin page sees all their certificate checks.
+  // make_factory configures it (cfg.upstream_ca_file) unless the caller already did
+  std::shared_ptr<backend::TlsClient> upstream_tls = std::make_shared<backend::TlsClient>();
 };
 
-// the one place resolver chains get built: the records_file resolver (if set) in front of a forwarding or
-// recursive resolver, all chains sharing one cache. with stub set, every chain is a StubResolver instead.
-// throws std::invalid_argument for an upstream that is not an IP address
+// the configured upstreams, the tls:// ones going through tls. throws std::invalid_argument for a host that
+// is not an IP address
+std::vector<backend::Endpoint> configured_upstreams(const Config& cfg, const std::shared_ptr<backend::TlsClient>& tls);
+
+// the public resolvers offered next to the configured ones: Google, Cloudflare and Quad9, plain and over TLS
+std::vector<backend::Endpoint> public_upstreams(const std::shared_ptr<backend::TlsClient>& tls);
+
+// "upstream:1.1.1.1:53" or, over TLS, "dot:1.1.1.1:853": one upstream's id in ResolverSwitch and on the admin page
+std::string upstream_id(const backend::Endpoint& e);
+
+// "1.1.1.1", "[2606:4700::1111]:5353", "1.1.1.1 over TLS (cloudflare-dns.com)"
+std::string upstream_label(const backend::Endpoint& e);
+
+// the one place resolver chains get built: the records_file resolver (if set) in front of the switched resolver
+// (forwarding or recursive, see ResolverSwitch), all chains sharing one cache. with stub set, every chain is a StubResolver instead.
+// throws std::invalid_argument for an upstream that is not an IP address, forwarding mode without upstreams,
+// or an upstream_ca_file that can't be loaded
 ResolverFactory make_factory(const Config& cfg, std::optional<StubOptions> stub = std::nullopt, ResolverShared shared = {});
 
 } // namespace mw

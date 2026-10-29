@@ -82,7 +82,7 @@ namespace backend {
             --budget.queries_left;
 
             const types::IP server = servers.front();
-            auto response          = query_server(Endpoint{ server, options.port }, name, type, rclass, false, std::min(options.server_timeout, left));
+            auto response          = query_server(Endpoint{ server, options.port, nullptr, "" }, name, type, rclass, false, std::min(options.server_timeout, left));
             // unreachable, broken or lame: try the zone's next server
             if (!response || (response->result.rcode != types::Rcode::NoError && response->result.rcode != types::Rcode::NXDomain)) {
                 servers.erase(servers.begin());

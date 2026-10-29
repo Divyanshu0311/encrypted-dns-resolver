@@ -8,7 +8,7 @@ if [ -f config/server.pem ] && [ -f config/server.key ]; then
     exit 0
 fi
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
-    -subj "/CN=dns-middleware demo" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" \
+    -subj "/CN=encrypted-dns-resolver demo" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" \
     -keyout config/server.key -out config/server.pem
 chmod 600 config/server.key
 echo "wrote config/server.pem and config/server.key"

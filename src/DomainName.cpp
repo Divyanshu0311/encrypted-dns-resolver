@@ -6,6 +6,14 @@
 #include "utils.hpp"
 
 namespace types {
+    namespace {
+        // true when name's last labels are suffix, ignoring case. std::ranges::ends_with would do, but GCC 15's
+        // standard library doesn't have it yet
+        bool ends_with_labels(const std::vector<std::string>& name, const std::vector<std::string>& suffix) {
+            if (suffix.size() > name.size()) return false;
+            return std::ranges::equal(name | std::views::drop(name.size() - suffix.size()), suffix, {}, utils::lower, utils::lower);
+        }
+    } // namespace
     DomainName::DomainName(const std::vector<uint8_t>& msg, std::size_t pos, std::size_t* next_pos) {
         std::size_t size  = 0;
         std::size_t jumps = 0;
@@ -156,12 +164,12 @@ namespace types {
 
     bool DomainName::is_ancestor_of(const DomainName& name) const noexcept {
         if (absolute != name.absolute) return false;
-        return std::ranges::ends_with(name.labels, labels, {}, utils::lower, utils::lower);
+        return ends_with_labels(name.labels, labels);
     }
 
     bool DomainName::is_descendent_of(const DomainName& name) const noexcept {
         if (absolute != name.absolute) return false;
-        return std::ranges::ends_with(labels, name.labels, {}, utils::lower, utils::lower);
+        return ends_with_labels(labels, name.labels);
     }
 
     DomainName DomainName::parent() const {

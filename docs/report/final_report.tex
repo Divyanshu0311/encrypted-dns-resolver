@@ -21,9 +21,11 @@
 \usepackage{listings}
 \usepackage{tikz}
 \usetikzlibrary{positioning,fit,arrows.meta,backgrounds,calc}
+\usepackage{needspace}
 \usepackage[hidelinks]{hyperref}
 
 \graphicspath{{img/}}
+\emergencystretch=2em
 \setlist{itemsep=1pt,topsep=3pt,parsep=0pt}
 \setlength{\parskip}{3pt}
 \captionsetup{font=small,labelfont=bf,skip=4pt}
@@ -47,7 +49,7 @@
 \begin{center}
   {\LARGE\bfseries Encrypted DNS Resolver}\\[4pt]
   {\large Project Stage II: Final Report}\\[8pt]
-  Dhruv (DoT front end) \qquad Divyanshu Gupta (middleware) \qquad Arnav Bhate (resolvers)\\[3pt]
+  Dhruv \qquad Divyanshu Gupta \qquad Arnav Bhate\\[3pt]
   29 October 2026
 \end{center}
 
@@ -63,7 +65,7 @@ clients reach over \textbf{DNS-over-TLS} (DoT, RFC~7858). Since Stage~I it can a
 upstream resolvers}, checking each upstream's certificate, so a query is encrypted from the client to the
 resolver that answers it.
 
-The prototype is about 9{,}700 lines of C++23 on Linux, using OpenSSL~3 and nothing else at run time. It has three layers:
+The prototype is about 9{,}000 lines of C++23 on Linux, using OpenSSL~3 and nothing else at run time. It has three layers:
 \begin{itemize}
   \item \textbf{Front end.} A single-threaded epoll DoT server. It does the TLS~1.3 handshake, framing,
   bounds-checked parsing, policy checks and padding to 468-byte blocks.
@@ -87,8 +89,8 @@ and Certificates tests against the real server.
   \item Invalid upstream responses (garbage, wrong ID, truncated, cut off mid-frame), upstream failure (closed
   port, server stopped, plain server where TLS was expected) and timeouts all become a bounded SERVFAIL, and the
   service recovers as soon as the upstream returns.
-  \item 528 automated tests pass in release, AddressSanitizer+UBSan and ThreadSanitizer builds. 48 of them
-  cover upstream DoT, certificates, invalid responses and timeouts.
+  \item 534 automated tests pass in release, AddressSanitizer+UBSan and ThreadSanitizer builds. 54 of them
+  cover the upstream DoT client and certificate validation; others cover invalid responses and timeouts.
   \item Under load the middleware delivers exactly one reply per query (100{,}000-query flood, also with 20\%
   injected failures). A paced 720~q/s run gives p99 10~ms with zero errors. An abusive client is blocked within
   0.09~s while a polite one is never refused.
@@ -194,70 +196,83 @@ Web page in the operator's browser & DNS rebinding to drive the admin API & Loop
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\sffamily\scriptsize, >={Stealth[length=5pt]},
-  box/.style={draw=black!70, rounded corners=2pt, minimum width=3.4cm, minimum height=0.56cm, align=center, fill=white},
-  ext/.style={draw=black!70, rounded corners=2pt, minimum width=3.0cm, minimum height=0.8cm, align=center, fill=black!6},
-  chk/.style={circle, fill=orange!90!black, text=white, inner sep=0.6pt, minimum size=11pt, font=\sffamily\tiny\bfseries},
+  box/.style={draw=black!70, rounded corners=2pt, text width=3.95cm, minimum height=0.56cm, align=center, fill=white},
+  ext/.style={draw=black!70, rounded corners=2pt, text width=3.0cm, minimum height=0.75cm, align=center, fill=black!6},
+  chk/.style={circle, fill=orange!90!black, text=white, inner sep=0pt, minimum size=11pt, font=\sffamily\tiny\bfseries},
   lab/.style={font=\sffamily\scriptsize\itshape, text=black!65},
-  tb/.style={draw=red!70!black, dashed, line width=0.9pt}]
-% front end
-\node[box] (fe1) at (3.4,0)    {accept(): source blocked? limits};
-\node[box] (fe2) at (3.4,-0.85) {TLS 1.3 handshake (OpenSSL)};
-\node[box] (fe3) at (3.4,-1.7) {DotFramer: 2-byte length};
-\node[box] (fe4) at (3.4,-2.55) {parse\_query(): bounds-checked};
-\node[box] (fe5) at (3.4,-3.4) {Admission: blocked domains};
-\node[box] (fe6) at (3.4,-4.5) {encode reply, pad to 468 B};
-\node[box] (fe7) at (3.4,-5.35) {mailbox + eventfd, SSL\_write};
-% middleware
-\node[box] (mw1) at (7.6,0)    {BlockList + RateLimiter};
-\node[box] (mw2) at (7.6,-0.85) {Responder (exactly once)};
-\node[box] (mw3) at (7.6,-1.7) {DeadlineTimer (2 s)};
-\node[box] (mw4) at (7.6,-2.55) {InFlightTable (coalesce)};
-\node[box] (mw5) at (7.6,-3.4) {LoadBalancer};
-\node[box, minimum height=0.9cm] (mw6) at (7.6,-4.5) {Workers $\times N$\\bounded queue + breaker};
-% backend
-\node[box] (be1) at (11.8,0)    {fault injection (demo)};
-\node[box] (be2) at (11.8,-0.85) {records file (hosts / zone)};
-\node[box] (be3) at (11.8,-1.7) {Cache (shared, TTL)};
-\node[box] (be4) at (11.8,-2.55) {ForwardingResolver};
-\node[box] (be5) at (11.8,-3.4) {TlsClient: verify certificate};
-\node[box] (be6) at (11.8,-4.5) {RecursiveResolver\\(instead of forwarding)};
+  ttl/.style={font=\sffamily\small\bfseries},
+  tb/.style={draw=red!70!black, dashed, line width=0.9pt},
+  tbl/.style={text=red!70!black, font=\sffamily\scriptsize\bfseries}]
+% rows: 0, -0.95, -1.9, -2.85, -3.8, then -5.0 and -6.0
+% front end (x = 4.4)
+\node[box] (fe1) at (4.4,0)     {accept(): blocked? conn.\ limits};
+\node[box] (fe2) at (4.4,-0.95) {TLS 1.3 handshake (OpenSSL)};
+\node[box] (fe3) at (4.4,-1.9)  {DotFramer: 2-byte length};
+\node[box] (fe4) at (4.4,-2.85) {parse\_query(): bounds-checked};
+\node[box] (fe5) at (4.4,-3.8)  {Admission: blocked domains};
+\node[box] (fe6) at (4.4,-5.0)  {encode reply, pad to 468 B};
+\node[box] (fe7) at (4.4,-6.0)  {mailbox + eventfd, SSL\_write};
+% middleware (x = 9.6)
+\node[box] (mw1) at (9.6,0)     {BlockList + RateLimiter};
+\node[box] (mw2) at (9.6,-0.95) {Responder (exactly once)};
+\node[box] (mw3) at (9.6,-1.9)  {DeadlineTimer (2 s)};
+\node[box] (mw4) at (9.6,-2.85) {InFlightTable (coalesce)};
+\node[box] (mw5) at (9.6,-3.8)  {LoadBalancer};
+\node[box, minimum height=0.85cm] (mw6) at (9.6,-5.0) {Workers $\times N$\\bounded queue + breaker};
+% backend (x = 14.8)
+\node[box] (be1) at (14.8,0)     {fault injection (demo)};
+\node[box] (be2) at (14.8,-0.95) {records file (hosts / zone)};
+\node[box] (be3) at (14.8,-1.9)  {Cache (shared, TTL)};
+\node[box] (be4) at (14.8,-2.85) {ForwardingResolver};
+\node[box] (be5) at (14.8,-3.8)  {TlsClient: verify certificate};
+\node[box, minimum height=0.85cm] (be6) at (14.8,-5.0) {RecursiveResolver\\(instead of forwarding)};
 % admin
-\node[box, minimum width=7.6cm, fill=black!3] (adm) at (9.7,-6.5) {AdminServer: HTTP on 127.0.0.1:8080, Host header checked, dashboard + JSON API};
-% external
-\node[ext] (cli) at (-1.2,0) {DoT client\\dig +tls, Android};
-\node[ext] (op)  at (-1.2,-6.5) {Operator browser};
-\node[ext] (up1) at (16.0,-3.4) {DoT upstream\\Cloudflare, Google, lab};
-\node[ext] (up2) at (16.0,-2.1) {plain upstream\\UDP/TCP 53};
-\node[ext] (up3) at (16.0,-4.7) {root, TLD,\\authoritative};
-% column titles
-\node[font=\sffamily\small\bfseries] at (3.4,0.75) {Front end (Dhruv)};
-\node[font=\sffamily\small\bfseries] at (7.6,0.75) {Middleware (Divyanshu)};
-\node[font=\sffamily\small\bfseries] at (11.8,0.75) {Backend (Arnav)};
+\node[box, text width=7.2cm, fill=black!3] (adm) at (9.6,-7.35) {AdminServer: HTTP on 127.0.0.1:8080\\Host header checked, dashboard + JSON API};
+% column titles and process label
+\node[ttl] (t1) at (4.4,0.8)  {Front end};
+\node[ttl] (t2) at (9.6,0.8)  {Middleware};
+\node[ttl] (t3) at (14.8,0.8) {Backend};
+\node[anchor=west, font=\sffamily\scriptsize\bfseries, text=blue!50!black] (plab) at (2.25,1.45) {dns\_server process (trusted)};
 % server zone
 \begin{scope}[on background layer]
-  \node[draw=blue!50!black, fill=blue!4, rounded corners=4pt, inner sep=7pt, fit=(fe1)(fe7)(mw1)(be6)(adm)(be1)] (srv) {};
+  \node[draw=blue!50!black, fill=blue!4, rounded corners=4pt, inner sep=0.3cm, fit=(fe1)(fe7)(be1)(be6)(adm)(t1)(t3)(plab)] (srv) {};
 \end{scope}
-\node[anchor=north west, font=\sffamily\scriptsize\bfseries, text=blue!50!black] at ($(srv.south west)+(0.1,0.42)$) {dns\_server process (trusted)};
+% external
+\node[ext] (cli) at (-1.4,0)    {DoT client\\dig +tls, Android};
+\node[ext] (op)  at (-1.4,-7.35) {Operator browser};
+\node[ext] (up2) at (21.0,-2.85) {plain upstream\\UDP/TCP 53};
+\node[ext] (up1) at (21.0,-3.8)  {DoT upstream\\Cloudflare, Google, lab};
+\node[ext] (up3) at (21.0,-5.0)  {root, TLD,\\authoritative};
 % trust boundaries
-\draw[tb] (1.55,1.15) -- (1.55,-7.2) node[below, text=red!70!black, font=\sffamily\scriptsize\bfseries] {TB1};
-\draw[tb] (14.05,1.15) -- (14.05,-7.2) node[below, text=red!70!black, font=\sffamily\scriptsize\bfseries] {TB2};
-\draw[tb] ($(adm.north west)+(-0.15,0.12)$) rectangle ($(adm.south east)+(0.15,-0.12)$);
-\node[text=red!70!black, font=\sffamily\scriptsize\bfseries] at ($(adm.east)+(0.55,0.45)$) {TB3};
-% flow
-\draw[->] (cli.east) -- node[above, lab, align=center] {TLS\\TCP 853} (fe1.west);
+\draw[tb] (1.75,2.0) -- (1.75,-8.3) node[below, tbl] {TB1};
+\draw[tb] (17.45,2.0) -- (17.45,-8.3) node[below, tbl] {TB2};
+\draw[tb] ($(adm.north west)+(-0.2,0.2)$) rectangle ($(adm.south east)+(0.2,-0.2)$);
+\node[tbl, anchor=west] at ($(adm.east)+(0.3,0)$) {TB3};
+% flow inside the columns
 \foreach \src/\dst in {fe1/fe2,fe2/fe3,fe3/fe4,fe4/fe5,fe6/fe7,mw1/mw2,mw2/mw3,mw3/mw4,mw4/mw5,mw5/mw6,be1/be2,be2/be3,be3/be4,be4/be5}
   \draw[->] (\src) -- (\dst);
-\draw[->] (fe5.east) -- ++(0.25,0) |- node[pos=0.75, above, lab] {submit()} (mw1.west);
-\draw[->] (mw6.east) -- ++(0.3,0) |- node[pos=0.75, above, lab] {resolve()} (be1.west);
-\draw[->] (mw6.west) -- node[above, lab] {callback} (fe6.east);
-\draw[->, thick, blue!50!black] (be5.east) -- node[above, lab] {DoT, verified} (up1.west);
-\draw[->, dashed] (be4.east) -- ++(0.45,0) |- node[pos=0.8, above, lab] {plain} (up2.west);
-\draw[->, dashed] (be6.east) -- ++(0.45,0) |- node[pos=0.8, above, lab] {UDP 53} (up3.west);
-\draw[->] (fe7.west) -| node[pos=0.75, left, lab, align=right] {encrypted,\\padded reply} ($(cli.south)+(0.6,0)$);
-\draw[->] (op.east) -- node[above, lab] {HTTP, loopback} (adm.west);
-% security checkpoints
+% between the columns (labels sit in the gaps, clear of boxes)
+\draw[->] (fe5.east) -- (7.0,-3.8) -- node[lab, sloped, above, pos=0.5] {submit()} (7.0,0) -- (mw1.west);
+\draw[->] (mw6.east) -- (12.2,-5.0) -- node[lab, sloped, above, pos=0.5] {resolve()} (12.2,0) -- (be1.west);
+\draw[->] (mw6.west) -- (fe6.east);
+\node[lab, above] at (7.0,-5.0) {callback};
+% client hop
+\draw[->] (cli.east) -- (fe1.west);
+\node[lab, above, align=center] at (0.85,0.05) {TLS\\TCP 853};
+\draw[->] (fe7.west) -| node[pos=0.8, right, lab, align=left] {encrypted,\\padded reply} (cli.south);
+% upstream hops
+\draw[->, dashed] (be4.east) -- (up2.west);
+\draw[->, thick, blue!50!black] (be5.east) -- (up1.west);
+\draw[->, dashed] (be6.east) -- (up3.west);
+\node[lab, above] at (18.45,-2.85) {plain};
+\node[lab, above, text=blue!50!black] at (18.45,-3.8) {DoT, verified};
+\node[lab, above] at (18.45,-5.0) {UDP 53};
+% operator
+\draw[->] (op.east) -- (adm.west);
+\node[lab, above, align=center] at (3.2,-7.35) {HTTP,\\loopback};
+% security checkpoints: just above the top edge, near the right corner, clear of text and arrows
 \foreach \nd/\num in {fe1/1,fe2/2,fe3/3,fe4/4,fe5/5,mw1/6,mw3/7,mw6/8,be5/9,be4/10,fe6/11,adm/12}
-  \node[chk] at (\nd.north east) {\num};
+  \node[chk] at ($(\nd.north east)+(-0.22,0.13)$) {\num};
 \end{tikzpicture}}
 \caption{Architecture, end-to-end data flow and trust boundaries. Orange numbers mark the security checks
 listed in Table~\ref{tab:checks}. Every worker owns its own resolver chain; only the cache is shared.}
@@ -265,8 +280,7 @@ listed in Table~\ref{tab:checks}. Every worker owns its own resolver chain; only
 \end{figure}
 
 \subsection{Components and interfaces}
-The three layers meet at two narrow interfaces, which matched team ownership and let each layer be built and
-tested alone. The middleware was developed against a stub resolver, and the front end against a fake
+The three layers meet at two narrow interfaces, which let each layer be built and tested alone. The middleware was developed against a stub resolver, and the front end against a fake
 middleware.
 
 \begin{lstlisting}[language=C++]
@@ -336,8 +350,8 @@ A queue separates the two, so a slow upstream can never stall the socket loop.
 \end{table}
 
 \subsection{Error handling}
-Expected failures (bad configuration, malformed query, TLS set-up) are returned as
-\code{std::expected<T,E>} with a precise message, for example \code{line 7: unknown key 'worker'}. Impossible
+Expected failures are returned as \code{std::expected<T,E>}: a bad configuration, a malformed query or a TLS
+set-up error comes back with a precise message, for example \code{line 7: unknown key 'worker'}. Impossible
 states throw at construction. The whole query path sits behind \code{noexcept} boundaries that turn anything
 thrown into SERVFAIL, so one bad query can never take the server down or lose a reply. Configuration is fully
 validated at start-up (ranges, file existence, certificate/key pairing). A server that starts is correctly
@@ -397,15 +411,15 @@ Block before TLS & The handshake is the most expensive thing a client can make u
 \subsection{Modules, ownership and reuse}
 \begin{table}[H]
 \centering\small
-\caption{Modules (all written by the team; external code is listed separately)}
+\caption{Modules by layer (all written by the team; external code is listed separately)}
 \begin{tabularx}{\textwidth}{@{}P{2.6cm}P{5.6cm}LP{1.2cm}@{}}
 \toprule
-Owner & Files & Responsibility & Lines \\
+Layer & Files & Responsibility & Lines \\
 \midrule
-Dhruv & \code{dot\_server}, \code{tls\_context}, \code{dot\_framer}, \code{dns\_message}, \code{admission}, \code{main} & DoT server, TLS, framing, parser/encoder, padding, blocked domains & $\approx$1{,}700 \\
-Divyanshu & \code{middleware}, \code{responder}, \code{deadline\_timer}, \code{inflight\_table}, \code{worker}, \code{load\_balancer}, \code{rate\_limiter}, \code{block\_list}, \code{bounded\_queue}, \code{metrics}, \code{query\_log}, \code{config}, \code{resolver\_factory}, \code{admin\_server}, \code{gui/index.html}, \code{tools/load\_gen} & Admission control, scheduling, reliability, configuration, observability, dashboard & $\approx$4{,}100 \\
-Arnav & \code{backend/}: \code{Cache}, \code{Upstream} (incl.\ \code{TlsClient}), \code{ForwardingResolver}, \code{RecursiveResolver}, \code{HostsFileResolver}, \code{ZoneFilesResolver}; \code{DomainName}, \code{IP}, \code{Records} & Resolution, caching, upstream transport and certificate checks, zone files & $\approx$2{,}600 \\
-All & \code{tests/} (30 files + fakes) & 528 unit, integration and end-to-end tests & $\approx$8{,}100 \\
+Front end & \code{dot\_server}, \code{tls\_context}, \code{dot\_framer}, \code{dns\_message}, \code{admission}, \code{main} & DoT server, TLS, framing, parser/encoder, padding, blocked domains & $\approx$1{,}900 \\
+Middleware & \code{middleware}, \code{responder}, \code{deadline\_timer}, \code{inflight\_table}, \code{worker}, \code{load\_balancer}, \code{rate\_limiter}, \code{block\_list}, \code{bounded\_queue}, \code{metrics}, \code{query\_log}, \code{config}, \code{resolver\_factory}, \code{admin\_server}, \code{gui/index.html}, \code{tools/load\_gen} & Admission control, scheduling, reliability, configuration, observability, dashboard & $\approx$5{,}300 \\
+Backend & \code{backend/}: \code{Cache}, \code{Upstream} (incl.\ \code{TlsClient}), \code{ForwardingResolver}, \code{RecursiveResolver}, \code{HostsFileResolver}, \code{ZoneFilesResolver}; \code{DomainName}, \code{IP}, \code{Records} & Resolution, caching, upstream transport and certificate checks, zone files & $\approx$2{,}700 \\
+Tests & \code{tests/} (31 files + fakes) & 534 unit, integration and end-to-end tests & $\approx$8{,}200 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -421,7 +435,7 @@ names and dates) and the dashboard are our own.
   \textit{tokens} + \textit{qps}\cdot\Delta t)$, one token per query. Idle buckets are swept every 1024 calls,
   so an attacker cycling addresses cannot grow memory without bound.
   \item \textbf{Deadline min-heap} (\code{DeadlineTimer}). One thread sleeps until the earliest
-  \code{(deadline, weak\_ptr<Responder>)}. Answered queries are freed at once, and callbacks run outside the
+  \code{(deadline,} \code{weak\_ptr<Responder>)}. Answered queries are freed at once, and callbacks run outside the
   lock to avoid deadlock on re-entry.
   \item \textbf{Circuit breaker.} Closed $\rightarrow$ Open after \code{failure\_threshold} consecutive
   SERVFAILs/exceptions; Open $\rightarrow$ Half-open after \code{cooldown\_ms}, admitting one probe. Success
@@ -433,7 +447,7 @@ names and dates) and the dashboard are our own.
   answered is shared across workers and asked first, so a dead upstream costs one timeout, not one per worker.
   \item \textbf{Certificate verification} (\code{TlsClient}). \code{SSL\_VERIFY\_PEER} against the system store or
   \code{upstream\_ca\_file}; \code{SSL\_set1\_host} (no partial wildcards) with SNI, or
-  \code{X509\_VERIFY\_PARAM\_set1\_ip\_asc} when no name is configured; minimum TLS~1.2. The connect, handshake,
+  \code{X509\_VERIFY\_\allowbreak PARAM\_\allowbreak set1\_ip\_asc} when no name is configured; minimum TLS~1.2. The connect, handshake,
   write and read all share the per-upstream deadline.
   \item \textbf{Iterative recursion} from the 13 root hints. It follows referrals and CNAMEs, enforces bailiwick
   on records and glue, shuffles server lists and skips lame servers, within a per-question budget.
@@ -441,7 +455,7 @@ names and dates) and the dashboard are our own.
 
 \subsection{Configuration and integration}
 All settings live in one \code{key = value} file, documented key by key in
-\code{config/middleware.example.conf}. The settings that matter for this report:
+\code{config/\allowbreak middleware.example.conf}. The settings that matter for this report:
 \begin{lstlisting}
 mode = forwarding
 upstreams = tls://1.1.1.1#cloudflare-dns.com, tls://8.8.8.8#dns.google   # DoT, name checked
@@ -463,8 +477,8 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
   \item \textbf{Replies from any thread.} Callbacks run on workers, the timer or inside \code{submit()}, but only
   the I/O thread may touch an \code{SSL*}. We solved it with a mailbox and an \code{eventfd} watched by epoll.
   The mailbox is held by \code{shared\_ptr} so a late callback after shutdown is still safe.
-  \item \textbf{Non-blocking OpenSSL.} Retried writes from a buffer that has moved needed
-  \code{SSL\_MODE\_ACCEPT\_MOVING\_WRITE\_BUFFER}. Level-triggered epoll was required because OpenSSL can hold
+  \item \textbf{Non-blocking OpenSSL.} A retried write may come from a buffer that has
+  since moved, which needs \code{SSL\_MODE\_ACCEPT\_\allowbreak MOVING\_\allowbreak WRITE\_\allowbreak BUFFER}. Level-triggered epoll was required because OpenSSL can hold
   decrypted bytes that edge triggering would never report again.
   \item \textbf{Exactly-once under races.} The deadline and the answer may complete simultaneously, and a
   half-open breaker's probe can expire in the queue. Each case got its own test, run under ThreadSanitizer.
@@ -501,18 +515,19 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}[font=\sffamily\scriptsize, >={Stealth[length=5pt]},
-  n/.style={draw=black!70, rounded corners=2pt, align=center, minimum height=0.9cm, minimum width=2.5cm, fill=white}]
-\node[n, fill=black!6] (c) at (0,0) {dig +tls\\Python TLS client};
-\node[n, fill=blue!6] (m) at (4.1,0) {main dns\_server\\127.0.0.1:8853\\self-signed cert};
-\node[n, fill=blue!6] (u) at (8.5,0) {lab upstream\\127.0.0.1:9853\\CN=resolver.lab.test};
-\node[n, fill=black!6] (g) at (12.4,0) {8.8.8.8:53};
-\node[n, fill=red!6] (e) at (8.5,-1.5) {expired-cert upstream\\127.0.0.1:9854};
-\node[n, fill=black!6] (b) at (4.1,-1.5) {dashboard\\127.0.0.1:8080};
-\draw[->, thick] (c) -- node[above] {DoT} (m);
-\draw[->, thick, blue!50!black] (m) -- node[above] {DoT, CA-verified} (u);
-\draw[->, dashed] (u) -- node[above] {plain} (g);
-\draw[->, dashed, red!70!black] (m.south east) -- node[below left] {probe: rejected} (e.west);
-\draw[<->] (m) -- (b);
+  n/.style={draw=black!70, rounded corners=2pt, align=center, minimum height=0.9cm, minimum width=2.6cm, fill=white},
+  lab/.style={font=\sffamily\scriptsize}]
+\node[n, fill=black!6] (c) at (0,0)    {dig +tls\\Python TLS client};
+\node[n, fill=blue!6]  (m) at (4.2,0)  {main dns\_server\\127.0.0.1:8853\\self-signed cert};
+\node[n, fill=blue!6]  (u) at (8.9,0)  {lab upstream\\127.0.0.1:9853\\CN=resolver.lab.test};
+\node[n, fill=black!6] (g) at (13.0,0) {8.8.8.8:53};
+\node[n, fill=black!6] (b) at (0,-2.0)   {dashboard\\127.0.0.1:8080};
+\node[n, fill=red!6]   (e) at (8.9,-2.0) {expired-cert upstream\\127.0.0.1:9854};
+\draw[->, thick] (c) -- node[lab, above] {DoT} (m);
+\draw[->, thick, blue!50!black] (m) -- node[lab, above, align=center] {DoT\\CA-verified} (u);
+\draw[->, dashed] (u) -- node[lab, above] {plain} (g);
+\draw[<->] (b.east) -| node[lab, above, pos=0.3] {same process} ($(m.south)+(-0.5,0)$);
+\draw[->, dashed, red!70!black] ($(m.south)+(0.5,0)$) |- node[lab, above, pos=0.75] {probe: rejected} (e.west);
 \end{tikzpicture}
 \caption{Lab topology used for the live evaluation. The configured upstream is
 \code{tls://127.0.0.1:9853\#resolver.lab.test} with \code{upstream\_ca\_file} pointing at the lab CA.}
@@ -522,14 +537,14 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
 \subsection{Automated test suite}
 \begin{table}[H]
 \centering\small
-\caption{Automated tests: 528 cases in 54 suites, 30 files. All pass in every build.}\label{tab:suite}
-\begin{tabularx}{\textwidth}{@{}LP{2.2cm}P{2.4cm}@{}}
+\caption{Automated tests: 534 cases in 54 suites, 31 files. All pass in every build.}\label{tab:suite}
+\begin{tabularx}{\textwidth}{@{}LP{4.6cm}P{1.6cm}@{}}
 \toprule
 Build & Result & Time \\
 \midrule
-Release build & \passed{}: 528/528 & 12.3 s \\
-AddressSanitizer + UndefinedBehaviorSanitizer & \passed{}: 528/528, 0 reports & ASAN\_TIME \\
-ThreadSanitizer & \passed{}: 528/528, 0 reports & TSAN\_TIME \\
+Release build & \passed{}: 534/534 & 13.4 s \\
+AddressSanitizer + UndefinedBehaviorSanitizer & \passed{}: 534/534, 0 reports & 27.4 s \\
+ThreadSanitizer & \passed{}: 534/534, 0 reports & 15.4 s \\
 \bottomrule
 \end{tabularx}
 \vspace{4pt}
@@ -537,12 +552,12 @@ ThreadSanitizer & \passed{}: 528/528, 0 reports & TSAN\_TIME \\
 \toprule
 Area & Representative suites & Tests \\
 \midrule
-Wire format, input safety & DnsMessageParse/Encode/Upstream, DomainName, DotFramer, DotFrame, IP, Records & 123 \\
+Wire format, input safety & DnsMessageParse/Encode/Upstream, DomainName, DotFramer, DotFrame, IP, Records & 128 \\
 Front end over real TLS & DotServer, TlsContext, Admission & 37 \\
-Middleware & Middleware, Responder, DeadlineTimer, InFlightTable, Worker, LoadBalancer, RateLimiter, BlockList, BoundedQueue, Metrics, QueryLog & 98 \\
-Upstream DoT, certificates & DotUpstream (24), TlsClient (4), AdminTlsTest (4), MakeFactory, ParseUpstream & 48 \\
-Resolvers, cache, zones & ForwardingResolver (14), RecursiveResolver(Test), Cache, ZoneFile, HostsFile & 145 \\
-Config, admin, misc. & ParseConfig, LoadConfig, AdminServerTest, AdminAbuseTest, \ldots & 77 \\
+Middleware & Middleware, Responder, DeadlineTimer, InFlightTable, Worker, LoadBalancer, RateLimiter, BlockList, BoundedQueue, Metrics, QueryLog & 97 \\
+Upstream DoT, certificates & DotUpstream (24), TlsClient (4), AdminTlsTest (4), MakeFactory (12), ParseUpstream (10) & 54 \\
+Resolvers, cache, zones & ForwardingResolver (14), RecursiveResolver, Cache, ZoneFile, ZoneFilesResolver, HostsFile, FindRecords, StubResolver & 161 \\
+Config, admin, misc. & ParseConfig, ParseListen, LoadConfig, AdminServerTest, AdminAbuseTest, small type tests & 57 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -553,7 +568,7 @@ throw-away test CA with any names, IPs and dates. Each rejection test also asser
 
 \subsection{Test cases: expected versus actual}
 {\small
-\begin{longtable}{@{}p{0.6cm}p{4.6cm}p{4.0cm}p{4.6cm}p{0.9cm}@{}}
+\begin{longtable}{@{}P{0.8cm}P{4.4cm}P{3.9cm}P{4.5cm}P{0.9cm}@{}}
 \caption{Key test cases (U = unit/integration test, L = live run on the lab topology). Evidence in the figures
 and listings below.}\label{tab:cases}\\
 \toprule
@@ -611,7 +626,7 @@ L & Failures test: 60\% injected, then 0\% & Breakers open, then close & All 4 o
 \end{longtable}
 }
 
-\subsection{Evidence: a DNS query completing over DNS-over-TLS}
+\subsection{Evidence: a DNS query completing over DNS-over-TLS}\label{sec:ev-dot}
 
 \begin{lstlisting}[caption={\code{dig +tls} through the full chain (client DoT $\rightarrow$ server $\rightarrow$ DoT to the verified lab upstream)},label={lst:dig}]
 $ dig +tls @127.0.0.1 -p 8853 example.com A
@@ -627,15 +642,15 @@ example.com.            66      IN      A       104.20.23.154
 
 \begin{figure}[H]
 \centering
-\begin{subfigure}[t]{0.32\textwidth}\centering
+\begin{subfigure}[b]{0.32\textwidth}\centering
   \includegraphics[width=\linewidth]{lookup_tls_cold.png}
   \caption{First lookup: miss, served by the DoT upstream.}
 \end{subfigure}\hfill
-\begin{subfigure}[t]{0.32\textwidth}\centering
+\begin{subfigure}[b]{0.32\textwidth}\centering
   \includegraphics[width=\linewidth]{lookup_tls_cached.png}
   \caption{Second lookup: cache hit, 0.09 ms.}
 \end{subfigure}\hfill
-\begin{subfigure}[t]{0.32\textwidth}\centering
+\begin{subfigure}[b]{0.32\textwidth}\centering
   \includegraphics[width=\linewidth]{lookup_local.png}\\[3pt]
   \includegraphics[width=\linewidth]{lookup_blocked.png}\\[3pt]
   \includegraphics[width=\linewidth]{lookup_nx.png}
@@ -646,6 +661,7 @@ client. ``Served by'' names the hop that answered: \code{upstream 127.0.0.1:9853
 \label{fig:lookup}
 \end{figure}
 
+\needspace{12\baselineskip}
 \textbf{Packet capture of both hops.} 83 packets were captured on the isolated loopback: four client
 connections to :8853 and one upstream connection to :9853, reused for all four names.
 \begin{lstlisting}[caption={\code{tshark} on the capture: what an on-path observer sees},label={lst:pcap}]
@@ -671,6 +687,7 @@ TLS record sizes by name             client hop reply   upstream query   upstrea
   example.com, client asked no padding       86 B            147 B             487 B
 \end{lstlisting}
 
+\needspace{11\baselineskip}
 \begin{lstlisting}[caption={Client-facing TLS parameters and the server key's protection}]
 $ openssl s_client -connect 127.0.0.1:8853 -alpn dot -brief
 Protocol version: TLSv1.3        Ciphersuite: TLS_AES_256_GCM_SHA384
@@ -682,19 +699,19 @@ $ ls -l config/server.key ; git check-ignore -v config/server.key
 .gitignore:7:*.key   config/server.key
 \end{lstlisting}
 
-\subsection{Evidence: upstream certificate validation}
+\subsection{Evidence: upstream certificate validation}\label{sec:ev-cert}
 \begin{figure}[H]
 \centering
-\begin{subfigure}[t]{0.33\textwidth}\centering
+\begin{subfigure}[b]{0.33\textwidth}\centering
   \includegraphics[width=\linewidth]{cert_ok.png}
   \caption{Accepted: chain to the lab CA, name \code{resolver.lab.test}, TLS 1.3.}
 \end{subfigure}\hfill
-\begin{subfigure}[t]{0.64\textwidth}\centering
+\begin{subfigure}[b]{0.64\textwidth}\centering
   \includegraphics[width=0.49\linewidth]{cert_wrong_name.png}\hfill
   \includegraphics[width=0.49\linewidth]{cert_expired.png}\\[4pt]
   \includegraphics[width=0.49\linewidth]{cert_self_signed.png}\hfill
   \includegraphics[width=0.49\linewidth]{cert_by_ip.png}\\[4pt]
-  \includegraphics[width=0.49\linewidth]{cert_unreachable.png}
+  \centering\includegraphics[width=0.49\linewidth]{cert_unreachable.png}
   \caption{Rejected: hostname mismatch (impostor), expired, self-signed, IP address mismatch; and ``could not
   connect'' for Cloudflare on the filtered network. Each says ``nothing was asked''.}
 \end{subfigure}
@@ -712,6 +729,7 @@ reason.}
 \label{fig:tlsrow}
 \end{figure}
 
+\needspace{8\baselineskip}
 The same checks from the command line, independent of our code:
 \begin{lstlisting}
 $ openssl s_client -connect 127.0.0.1:9853 -CAfile ca.pem -verify_hostname resolver.lab.test -brief
@@ -791,21 +809,21 @@ zero-length frame                            -> connection closed, no reply
 
 \begin{figure}[H]
 \centering
-\begin{subfigure}[t]{0.27\textwidth}\centering
-  \includegraphics[width=\linewidth]{abuse.png}
+\begin{subfigure}[b]{0.31\textwidth}\centering
+  \includegraphics[height=4.4cm]{abuse.png}
   \caption{2{,}000 q/s: blocked after 0.09~s.}
 \end{subfigure}\hfill
-\begin{subfigure}[t]{0.27\textwidth}\centering
-  \includegraphics[width=\linewidth]{abuse_polite.png}
+\begin{subfigure}[b]{0.31\textwidth}\centering
+  \includegraphics[height=4.4cm]{abuse_polite.png}
   \caption{50 q/s: served normally.}
 \end{subfigure}\hfill
-\begin{subfigure}[t]{0.29\textwidth}\centering
-  \includegraphics[width=\linewidth]{protection.png}
+\begin{subfigure}[b]{0.33\textwidth}\centering
+  \includegraphics[height=4.4cm]{protection.png}
   \caption{Protection panel: client blocked.}
-\end{subfigure}\hfill
-\begin{subfigure}[t]{0.13\textwidth}\centering
+\end{subfigure}\\[8pt]
+\begin{subfigure}[b]{0.55\textwidth}\centering
   \includegraphics[width=\linewidth]{load.png}
-  \caption{Load: 20k cached queries, 182k q/s.}
+  \caption{Load test: 20k cached queries at 182k q/s.}
 \end{subfigure}
 \caption{Abuse and Load tests. The abusive client got 117 answers and 50 rate-limited replies, then 15{,}831
 REFUSED while blocked. The polite client was never refused.}
@@ -872,9 +890,10 @@ ID & Defect & Status \\
 D1 & \code{DomainName} from wire: wrong size bound, two off-by-ones (next offset, compression pointer), missing overflow check before copying a label. Found by parser tests. & Fixed (6f7c47d) \\
 D2 & Connection exhaustion: unsent answers exempted a connection from the idle timeout; trickled bytes counted as activity; no per-source connection cap. & Fixed (9825c9a), one test per fix \\
 D3 & Flaky tests: per-test temp directories collided between processes; a fake-clock jump timed out a running lookup; a connect/reset race. & Fixed (9825c9a) \\
-D4 & Queries to DoT upstreams carried no EDNS padding, so their size (59--108 B) leaked the name's length to an observer of the upstream hop. Found in this evaluation's capture. Fixed by padding every \code{tls://} query to 128 B, which also makes the upstream pad its answers. & Fixed (\code{Upstream}, \code{encode\_query}), 3 new tests \\
-D5 & Dashboard sidebar clipped long ``Served by'' values: the grid cell lacked \code{min-width:0} and badges never wrapped. Found while taking this report's screenshots. & Fixed (\code{gui/index.html}) \\
+D4 & Queries to DoT upstreams carried no EDNS padding, so their size (59--108 B) leaked the name's length to an observer of the upstream hop. Found in this evaluation's capture. Fixed by padding every \code{tls://} query to 128 B, which also makes the upstream pad its answers. & Fixed (\code{Upstream}, \code{encode\_\allowbreak query}), 3 new tests \\
+D5 & Dashboard sidebar clipped long ``Served by'' values: the grid cell lacked \code{min-width:0} and badges never wrapped. Found while taking this report's screenshots. & Fixed (\code{gui/\allowbreak index.html}) \\
 D6 & Old sanitizer build directories configured with g++-14 fail to compile (\code{append\_range}). Build configuration only; fresh g++-15 configure passes. & Workaround: reconfigure \\
+D7 & The final merge (f38d405) brought back \code{std::ranges::ends\_with} in \code{DomainName}, which GCC~15's standard library lacks, so \code{main} no longer compiled. Found when re-running the suite for this report. & Fixed (helper restored) \\
 \bottomrule
 \end{tabularx}
 
@@ -935,6 +954,7 @@ excess load is refused, not queued.
 \section{Deployment and future work}
 
 \subsection{Dependencies and build}
+\needspace{10\baselineskip}
 On Ubuntu:
 \begin{lstlisting}[language=bash]
 sudo add-apt-repository ppa:ubuntu-toolchain-r/test && sudo apt update
@@ -942,9 +962,10 @@ sudo apt install g++-15 cmake libssl-dev dnsutils         # CMake >= 3.21, OpenS
 cmake --preset release && cmake --build --preset release  # dns_server, load_gen, dns_tests
 \end{lstlisting}
 
-On Fedora
+\needspace{5\baselineskip}
+On Fedora:
 \begin{lstlisting}[language=bash]
-sudo dnf isntall g++ cmake openssl-devel bind-utils       # CMake >= 3.21, OpenSSL 3
+sudo dnf install g++ cmake openssl-devel bind-utils       # CMake >= 3.21, OpenSSL 3
 cmake --preset release && cmake --build --preset release  # dns_server, load_gen, dns_tests
 \end{lstlisting}
 
@@ -956,8 +977,9 @@ dig +tls @127.0.0.1 -p 8853 example.com        # encrypted query
 dig +tls @127.0.0.1 -p 8853 nas.lan            # local record
 dig +tls @127.0.0.1 -p 8853 ad.doubleclick.net # REFUSED (blocked domain)
 \end{lstlisting}
-\code{config/demo.conf} forwards over DoT to \code{tls://1.1.1.1\#cloudflare-dns.com} and
-\code{tls://8.8.8.8\#dns.google} using the system CA store. On a network that blocks port 853, pick a plain
+\needspace{8\baselineskip}
+\code{config/demo.conf} forwards over DoT to \code{tls://1.1.1.1\#\allowbreak cloudflare-dns.com} and
+\code{tls://8.8.8.8\#\allowbreak dns.google} using the system CA store. On a network that blocks port 853, pick a plain
 resolver in the dashboard's resolver switch, or use a lab upstream as in Figure~\ref{fig:lab}:
 \begin{lstlisting}
 upstreams = tls://127.0.0.1:9853#resolver.lab.test
@@ -968,7 +990,7 @@ certificate, and keep \code{admin\_listen} on loopback.
 
 \subsection{Tests}
 \begin{lstlisting}[language=bash]
-ctest --preset release                     # or ./build/release/dns_tests   (528 tests)
+ctest --test-dir build/release             # or ./build/release/dns_tests   (534 tests)
 cmake --preset asan && cmake --build --preset asan && ctest --preset asan
 cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan
 ./build/release/dns_tests --gtest_filter='DotUpstream*:TlsClient*:AdminTls*'   # upstream DoT evidence
@@ -982,7 +1004,7 @@ include/            DomainName, IP, Records, dns_message (wire format), utils
 include/mw/         middleware + front-end headers (namespace mw)
 include/backend/    resolvers, Cache, Upstream / TlsClient
 src/                library sources, main.cpp;  src/backend/  resolver sources
-tests/              GoogleTest suite (30 files);  tests/support/  fake DNS / DoT servers, test CA, printers
+tests/              GoogleTest suite (31 files);  tests/support/  fake DNS / DoT servers, test CA, printers
 tools/              load_gen.cpp, make_demo_cert.sh
 gui/                index.html (dashboard, served by dns_server)
 config/             demo.conf, demo.hosts, blocked_domains.txt, middleware.example.conf
@@ -1007,18 +1029,18 @@ docs/               frontend.md/.tex, this report
 Project: \textbf{Encrypted DNS Resolver}. The chosen encrypted protocol is \textbf{DNS-over-TLS} (RFC 7858),
 used on both the client hop and the upstream hop.
 
-\begin{longtable}{@{}p{4.0cm}p{6.8cm}p{3.6cm}@{}}
+\begin{longtable}{@{}P{3.8cm}P{7.4cm}P{5.0cm}@{}}
 \toprule
 Required evidence & What is shown & Where \\
 \midrule
 \endhead
 A DNS query completing through the encrypted protocol & \code{dig +tls} gets NOERROR; the dashboard shows it served by the upstream ``over TLS''; the capture shows only TLS 1.3 records on both hops, 0 DNS frames, no names, padded 487 B replies & Listing~\ref{lst:dig}, Figure~\ref{fig:lookup}, Listing~\ref{lst:pcap}, Figure~\ref{fig:overview} \\
 \midrule
-Client-side TLS parameters & TLS 1.3, AES-256-GCM, X25519; TLS 1.2 refused; key file mode 600, git-ignored & Section 5.4 (\code{openssl s\_client}) \\
+Client-side TLS parameters & TLS 1.3, AES-256-GCM, X25519; TLS 1.2 refused; key file mode 600, git-ignored & Section~\ref{sec:ev-dot} (\code{openssl s\_client}) \\
 \midrule
-Upstream certificate validation & Accepted certificate with subject, issuer, expiry, protocol; rejections for hostname mismatch, expired, self-signed, IP mismatch; ``nothing was asked''; counters and last-rejection reason; \code{openssl} cross-check & Figures~\ref{fig:certs}, \ref{fig:tlsrow}; Section 5.5; Table~\ref{tab:cases} \\
+Upstream certificate validation & Accepted certificate with subject, issuer, expiry, protocol; rejections for hostname mismatch, expired, self-signed, IP mismatch; ``nothing was asked''; counters and last-rejection reason; \code{openssl} cross-check & Figures~\ref{fig:certs}, \ref{fig:tlsrow}; Section~\ref{sec:ev-cert}; Table~\ref{tab:cases} \\
 \midrule
-Tests for invalid responses & Garbage, wrong ID or question, truncated, cut mid-frame, junk datagrams, malformed TCP; no poisoning of the next query; only own-chain records cached & Table~\ref{tab:cases}; \code{test\_dot\_upstream.cpp}, \code{test\_forwarding\_resolver.cpp} \\
+Tests for invalid responses & Garbage, wrong ID or question, truncated, cut mid-frame, junk datagrams, malformed TCP; no poisoning of the next query; only own-chain records cached & Table~\ref{tab:cases}; \code{test\_dot\_upstream.cpp}, \code{test\_forwarding\_\allowbreak resolver.cpp} \\
 \midrule
 Tests for upstream failure & Closed port; upstream killed $\rightarrow$ fast SERVFAIL $\rightarrow$ recovery on restart; plain server where TLS expected (no fallback); next upstream tried after rejection; breakers open and close & Listing~\ref{lst:fail}, Figures~\ref{fig:log}, \ref{fig:breakers} \\
 \midrule
@@ -1028,7 +1050,7 @@ Malformed client input & FORMERR / NOTIMP / close for 12 hand-made messages & Li
 \midrule
 Availability & Abuse blocking, load results, exactly-once delivery & Figures~\ref{fig:abuse}, \ref{fig:overview}; Table~\ref{tab:load} \\
 \midrule
-Whole suite, sanitizers & 528/528 in release, ASan+UBSan, TSan & Table~\ref{tab:suite} \\
+Whole suite, sanitizers & 534/534 in release, ASan+UBSan, TSan & Table~\ref{tab:suite} \\
 \bottomrule
 \end{longtable}
 

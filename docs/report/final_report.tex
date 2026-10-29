@@ -22,6 +22,7 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning,fit,arrows.meta,backgrounds,calc}
 \usepackage{needspace}
+\usepackage[skins,breakable]{tcolorbox}
 \usepackage[hidelinks]{hyperref}
 
 \graphicspath{{img/}}
@@ -191,88 +192,103 @@ Web page in the operator's browser & DNS rebinding to drive the admin API & Loop
 % =====================================================================
 \section{Architecture and design}
 
-\begin{figure}[H]
+\begin{figure}[tp]
 \centering
+\definecolor{feFill}{HTML}{E8F0FB}\definecolor{mwFill}{HTML}{E9F5EC}\definecolor{beFill}{HTML}{F3ECF8}%
+\definecolor{procLine}{HTML}{3B4A8C}\definecolor{tbRed}{HTML}{C62828}\definecolor{badge}{HTML}{E06C00}%
+\definecolor{extFill}{HTML}{EDEDED}%
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  font=\sffamily\scriptsize, >={Stealth[length=5pt]},
-  box/.style={draw=black!70, rounded corners=2pt, text width=3.95cm, minimum height=0.56cm, align=center, fill=white},
-  ext/.style={draw=black!70, rounded corners=2pt, text width=3.0cm, minimum height=0.75cm, align=center, fill=black!6},
-  chk/.style={circle, fill=orange!90!black, text=white, inner sep=0pt, minimum size=11pt, font=\sffamily\tiny\bfseries},
-  lab/.style={font=\sffamily\scriptsize\itshape, text=black!65},
-  ttl/.style={font=\sffamily\small\bfseries},
-  tb/.style={draw=red!70!black, dashed, line width=0.9pt},
-  tbl/.style={text=red!70!black, font=\sffamily\scriptsize\bfseries}]
-% rows: 0, -0.95, -1.9, -2.85, -3.8, then -5.0 and -6.0
-% front end (x = 4.4)
-\node[box] (fe1) at (4.4,0)     {accept(): blocked? conn.\ limits};
-\node[box] (fe2) at (4.4,-0.95) {TLS 1.3 handshake (OpenSSL)};
-\node[box] (fe3) at (4.4,-1.9)  {DotFramer: 2-byte length};
-\node[box] (fe4) at (4.4,-2.85) {parse\_query(): bounds-checked};
-\node[box] (fe5) at (4.4,-3.8)  {Admission: blocked domains};
-\node[box] (fe6) at (4.4,-5.0)  {encode reply, pad to 468 B};
-\node[box] (fe7) at (4.4,-6.0)  {mailbox + eventfd, SSL\_write};
-% middleware (x = 9.6)
-\node[box] (mw1) at (9.6,0)     {BlockList + RateLimiter};
-\node[box] (mw2) at (9.6,-0.95) {Responder (exactly once)};
-\node[box] (mw3) at (9.6,-1.9)  {DeadlineTimer (2 s)};
-\node[box] (mw4) at (9.6,-2.85) {InFlightTable (coalesce)};
-\node[box] (mw5) at (9.6,-3.8)  {LoadBalancer};
-\node[box, minimum height=0.85cm] (mw6) at (9.6,-5.0) {Workers $\times N$\\bounded queue + breaker};
-% backend (x = 14.8)
-\node[box] (be1) at (14.8,0)     {fault injection (demo)};
-\node[box] (be2) at (14.8,-0.95) {records file (hosts / zone)};
-\node[box] (be3) at (14.8,-1.9)  {Cache (shared, TTL)};
-\node[box] (be4) at (14.8,-2.85) {ForwardingResolver};
-\node[box] (be5) at (14.8,-3.8)  {TlsClient: verify certificate};
-\node[box, minimum height=0.85cm] (be6) at (14.8,-5.0) {RecursiveResolver\\(instead of forwarding)};
+  font=\sffamily\scriptsize, >={Stealth[length=2.2mm]},
+  box/.style={draw=black!65, rounded corners=2pt, fill=white, text width=34mm, minimum height=8.6mm,
+              align=center, inner sep=2pt, execute at begin node={\hyphenpenalty=10000\exhyphenpenalty=10000}},
+  ext/.style={box, fill=extFill, text width=25mm},
+  flow/.style={->, thick, black!75},
+  plain/.style={->, thick, black!60, dashed},
+  tls/.style={->, very thick, procLine},
+  iface/.style={font=\sffamily\scriptsize\itshape, fill=white, inner sep=1pt},
+  tb/.style={tbRed, dashed, thick},
+  tblabel/.style={tbRed, font=\sffamily\scriptsize\bfseries},
+  chk/.style={circle, fill=badge, text=white, inner sep=0pt, minimum size=3.6mm, font=\sffamily\tiny\bfseries}]
+\def\xFE{5.5}\def\xMW{9.5}\def\xBE{13.7}
+% front end: request path, then reply path
+\node[box] (acc)  at (\xFE,-1.0) {\texttt{accept()}: source\\ blocked? connection caps};
+\node[box] (hs)   at (\xFE,-2.0) {TLS 1.3 handshake (OpenSSL)};
+\node[box] (frm)  at (\xFE,-3.0) {\texttt{DotFramer}:\\ 2-byte length prefix};
+\node[box] (prs)  at (\xFE,-4.0) {\texttt{parse\_query()}:\\ bounds-checked};
+\node[box] (adm)  at (\xFE,-5.0) {Admission:\\ blocked domains};
+\node[box] (enc)  at (\xFE,-6.4) {encode reply, pad to 468\,B};
+\node[box] (mbox) at (\xFE,-7.4) {mailbox + eventfd,\\ \texttt{SSL\_write}};
+% middleware
+\node[box] (rl)   at (\xMW,-1.0) {\texttt{BlockList}\\ + \texttt{RateLimiter}};
+\node[box] (resp) at (\xMW,-2.0) {\texttt{Responder} (once)\\ + \texttt{DeadlineTimer} (2\,s)};
+\node[box] (inf)  at (\xMW,-3.0) {\texttt{InFlightTable}:\\ coalesce duplicates};
+\node[box] (lb)   at (\xMW,-4.0) {\texttt{LoadBalancer}};
+\node[box] (wrk)  at (\xMW,-5.0) {Workers $\times N$\\ bounded queue + breaker};
+% backend (one chain per worker)
+\node[box] (fault) at (\xBE,-1.0) {fault injection (demo)};
+\node[box] (rec)  at (\xBE,-2.0) {records file\\ (hosts / zone)};
+\node[box] (cache)at (\xBE,-3.0) {Cache (shared, TTL)};
+\node[box] (fwd)  at (\xBE,-4.0) {\texttt{ForwardingResolver}};
+\node[box] (tlsc) at (\xBE,-5.0) {\texttt{TlsClient}:\\ verify certificate};
+\node[box] (rcs)  at (\xBE,-6.4) {\texttt{RecursiveResolver}\\ (instead of forwarding)};
 % admin
-\node[box, text width=7.2cm, fill=black!3] (adm) at (9.6,-7.35) {AdminServer: HTTP on 127.0.0.1:8080\\Host header checked, dashboard + JSON API};
-% column titles and process label
-\node[ttl] (t1) at (4.4,0.8)  {Front end};
-\node[ttl] (t2) at (9.6,0.8)  {Middleware};
-\node[ttl] (t3) at (14.8,0.8) {Backend};
-\node[anchor=west, font=\sffamily\scriptsize\bfseries, text=blue!50!black] (plab) at (2.25,1.45) {dns\_server process (trusted)};
-% server zone
-\begin{scope}[on background layer]
-  \node[draw=blue!50!black, fill=blue!4, rounded corners=4pt, inner sep=0.3cm, fit=(fe1)(fe7)(be1)(be6)(adm)(t1)(t3)(plab)] (srv) {};
-\end{scope}
+\node[box, text width=66mm] (adminsrv) at ($(\xMW,-8.6)!0.5!(\xBE,-8.6)$)
+     {\texttt{AdminServer}: HTTP on 127.0.0.1:8080, Host header checked, dashboard + JSON API};
 % external
-\node[ext] (cli) at (-1.4,0)    {DoT client\\dig +tls, Android};
-\node[ext] (op)  at (-1.4,-7.35) {Operator browser};
-\node[ext] (up2) at (21.0,-2.85) {plain upstream\\UDP/TCP 53};
-\node[ext] (up1) at (21.0,-3.8)  {DoT upstream\\Cloudflare, Google, lab};
-\node[ext] (up3) at (21.0,-5.0)  {root, TLD,\\authoritative};
+\node[ext] (client) at (0.3,-1.0) {DoT client\\ \texttt{dig +tls}, Android};
+\node[ext] (op)     at (0.3,-8.6) {Operator's browser};
+\node[ext] (pup)    at (19.1,-4.0) {plain upstream\\ UDP/TCP 53};
+\node[ext] (dup)    at (19.1,-5.0) {DoT upstream\\ Cloudflare, Google, lab};
+\node[ext] (auth)   at (19.1,-6.4) {root, TLD,\\ authoritative servers};
+% lanes and process
+\begin{scope}[on background layer]
+  \node[fit=(acc)(mbox), fill=feFill, rounded corners=3pt, inner sep=5pt,
+        label={[font=\sffamily\small\bfseries]above:Front end}] (laneFE) {};
+  \node[fit=(rl)(wrk),  fill=mwFill, rounded corners=3pt, inner sep=5pt,
+        label={[font=\sffamily\small\bfseries]above:Middleware}] (laneMW) {};
+  \node[fit=(fault)(rcs), fill=beFill, rounded corners=3pt, inner sep=5pt,
+        label={[font=\sffamily\small\bfseries]above:Backend}] (laneBE) {};
+  \coordinate (procTop) at ($(laneFE.north)+(0,0.45)$);
+  \node[fit=(laneFE)(laneMW)(laneBE)(adminsrv)(procTop), draw=procLine, thick, rounded corners=4pt,
+        inner sep=6pt] (proc) {};
+\end{scope}
+\node[anchor=south east, font=\sffamily\scriptsize\bfseries, text=procLine] at ($(proc.north east)+(-0.4,0)$)
+     {\texttt{dns\_server} process (trusted)};
+% security checks (Table 2)
+\foreach \nd/\num in {acc/1,hs/2,frm/3,prs/4,adm/5,rl/6,resp/7,wrk/8,tlsc/9,fwd/10,rcs/10,enc/11,adminsrv/12}
+  \node[chk] at ($(\nd.north east)+(-0.06,-0.04)$) {\num};
+% request flow
+\draw[tls] (client) -- (acc);
+\node[anchor=south, align=center, font=\sffamily\scriptsize, text=procLine] at (2.27,-0.98) {TLS\\TCP 853};
+\foreach \a/\b in {acc/hs,hs/frm,frm/prs,prs/adm,rl/resp,resp/inf,inf/lb,lb/wrk,fault/rec,rec/cache,cache/fwd,fwd/tlsc,enc/mbox}
+  \draw[flow] (\a) -- (\b);
+\draw[flow] (adm.east) -- (7.5,-5.0) -- (7.5,-1.0) -- (rl.west);
+\node[iface, rotate=90] at (7.5,-3.0) {\texttt{submit()}};
+\draw[flow] (wrk.east) -- (11.45,-5.0) -- (11.45,-1.0) -- (fault.west);
+\node[iface, rotate=90] at (11.45,-3.5) {\texttt{resolve()}};
+\draw[plain] (cache.west) -- (11.86,-3.0) -- (11.86,-6.4) -- (rcs.west);
+% upstream hop
+\draw[tls]   (tlsc) -- node[above, pos=0.62, align=center, font=\sffamily\scriptsize, text=procLine]{DoT,\\verified} (dup);
+\draw[plain] (fwd)  -- node[above, pos=0.62, align=center, font=\sffamily\scriptsize]{plain\\DNS} (pup);
+\draw[plain] (rcs)  -- node[above, pos=0.62, font=\sffamily\scriptsize]{UDP 53} (auth);
+% reply path
+\draw[flow] (wrk.south) -- (\xMW,-6.4) -- node[above, iface]{callback (once)} (enc.east);
+\draw[tls]  (mbox.west) -- (0.3,-7.4) -- node[left, align=right, font=\sffamily\scriptsize, text=procLine]
+            {encrypted,\\padded reply} (client.south);
+% admin
+\draw[flow] (op) -- node[above, font=\sffamily\scriptsize, pos=0.6]{HTTP, loopback} (adminsrv);
 % trust boundaries
-\draw[tb] (1.75,2.0) -- (1.75,-8.3) node[below, tbl] {TB1};
-\draw[tb] (17.45,2.0) -- (17.45,-8.3) node[below, tbl] {TB2};
-\draw[tb] ($(adm.north west)+(-0.2,0.2)$) rectangle ($(adm.south east)+(0.2,-0.2)$);
-\node[tbl, anchor=west] at ($(adm.east)+(0.3,0)$) {TB3};
-% flow inside the columns
-\foreach \src/\dst in {fe1/fe2,fe2/fe3,fe3/fe4,fe4/fe5,fe6/fe7,mw1/mw2,mw2/mw3,mw3/mw4,mw4/mw5,mw5/mw6,be1/be2,be2/be3,be3/be4,be4/be5}
-  \draw[->] (\src) -- (\dst);
-% between the columns (labels sit in the gaps, clear of boxes)
-\draw[->] (fe5.east) -- (7.0,-3.8) -- node[lab, sloped, above, pos=0.5] {submit()} (7.0,0) -- (mw1.west);
-\draw[->] (mw6.east) -- (12.2,-5.0) -- node[lab, sloped, above, pos=0.5] {resolve()} (12.2,0) -- (be1.west);
-\draw[->] (mw6.west) -- (fe6.east);
-\node[lab, above] at (7.0,-5.0) {callback};
-% client hop
-\draw[->] (cli.east) -- (fe1.west);
-\node[lab, above, align=center] at (0.85,0.05) {TLS\\TCP 853};
-\draw[->] (fe7.west) -| node[pos=0.8, right, lab, align=left] {encrypted,\\padded reply} (cli.south);
-% upstream hops
-\draw[->, dashed] (be4.east) -- (up2.west);
-\draw[->, thick, blue!50!black] (be5.east) -- (up1.west);
-\draw[->, dashed] (be6.east) -- (up3.west);
-\node[lab, above] at (18.45,-2.85) {plain};
-\node[lab, above, text=blue!50!black] at (18.45,-3.8) {DoT, verified};
-\node[lab, above] at (18.45,-5.0) {UDP 53};
-% operator
-\draw[->] (op.east) -- (adm.west);
-\node[lab, above, align=center] at (3.2,-7.35) {HTTP,\\loopback};
-% security checkpoints: just above the top edge, near the right corner, clear of text and arrows
-\foreach \nd/\num in {fe1/1,fe2/2,fe3/3,fe4/4,fe5/5,mw1/6,mw3/7,mw6/8,be5/9,be4/10,fe6/11,adm/12}
-  \node[chk] at ($(\nd.north east)+(-0.22,0.13)$) {\num};
+\draw[tb] (2.95,0.6) -- (2.95,-7.95);   \node[tblabel, anchor=south] at (2.95,0.6) {TB1};
+\draw[tb] (16.05,0.6) -- (16.05,-7.1); \node[tblabel, anchor=south] at (16.05,0.6) {TB2};
+\draw[tb] (2.95,-8.15) -- (2.95,-9.1);   \node[tblabel, anchor=north] at (2.95,-9.1) {TB3};
+% legend
+\begin{scope}[shift={(8.0,-9.8)}]
+  \node[chk] at (-3.6,0) {n}; \node[right] at (-3.4,0) {security check (Table~\ref{tab:checks})};
+  \draw[tls]   (0.4,0) -- (1.1,0) node[right, black]{encrypted (TLS)};
+  \draw[plain] (3.9,0) -- (4.6,0) node[right, black]{plaintext DNS};
+  \draw[tb]    (7.3,0) -- (8.0,0) node[right, black]{trust boundary};
+\end{scope}
 \end{tikzpicture}}
 \caption{Architecture, end-to-end data flow and trust boundaries. Orange numbers mark the security checks
 listed in Table~\ref{tab:checks}. Every worker owns its own resolver chain; only the cache is shared.}
@@ -408,7 +424,7 @@ Block before TLS & The handshake is the most expensive thing a client can make u
   Python for hand-crafted malformed messages, Chrome for the dashboard.
 \end{itemize}
 
-\subsection{Modules, ownership and reuse}
+\subsection{Modules and reuse}
 \begin{table}[H]
 \centering\small
 \caption{Modules by layer (all written by the team; external code is listed separately)}
@@ -493,7 +509,6 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
 \section{Testing, results and security evaluation}
 
 \subsection{Test environment}
-\textbf{Environment A}
 \begin{itemize}
   \item Ubuntu 22.04, Linux 6.8, GCC 15, OpenSSL 3.0.2, release build, \code{workers = 4}, deadline 2~s.
   \item \textbf{Network constraint.} The evaluation network (campus Wi-Fi) drops outbound TCP 853 to every
@@ -505,11 +520,6 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
   \emph{expired} certificate from the same CA. The unreachable public resolvers became live timeout tests.
   \item \textbf{Capture.} \code{dumpcap} inside an unprivileged network namespace (\code{unshare -rn}) recorded
   both hops on an isolated loopback. In the namespace, the lab upstream answers from its own records file.
-\end{itemize}
-
-\textbf{Environment B}
-\begin{itemize}
-  \item Fedora 44, Linux 7.22, Clang 22, OpenSSL 3.5.9, release build
 \end{itemize}
 
 \begin{figure}[H]
@@ -642,15 +652,15 @@ example.com.            66      IN      A       104.20.23.154
 
 \begin{figure}[H]
 \centering
-\begin{subfigure}[b]{0.32\textwidth}\centering
+\begin{subfigure}[t]{0.32\textwidth}\vspace{0pt}\centering
   \includegraphics[width=\linewidth]{lookup_tls_cold.png}
   \caption{First lookup: miss, served by the DoT upstream.}
 \end{subfigure}\hfill
-\begin{subfigure}[b]{0.32\textwidth}\centering
+\begin{subfigure}[t]{0.32\textwidth}\vspace{0pt}\centering
   \includegraphics[width=\linewidth]{lookup_tls_cached.png}
   \caption{Second lookup: cache hit, 0.09 ms.}
 \end{subfigure}\hfill
-\begin{subfigure}[b]{0.32\textwidth}\centering
+\begin{subfigure}[t]{0.32\textwidth}\vspace{0pt}\centering
   \includegraphics[width=\linewidth]{lookup_local.png}\\[3pt]
   \includegraphics[width=\linewidth]{lookup_blocked.png}\\[3pt]
   \includegraphics[width=\linewidth]{lookup_nx.png}
@@ -702,11 +712,11 @@ $ ls -l config/server.key ; git check-ignore -v config/server.key
 \subsection{Evidence: upstream certificate validation}\label{sec:ev-cert}
 \begin{figure}[H]
 \centering
-\begin{subfigure}[b]{0.33\textwidth}\centering
+\begin{subfigure}[t]{0.33\textwidth}\vspace{0pt}\centering
   \includegraphics[width=\linewidth]{cert_ok.png}
   \caption{Accepted: chain to the lab CA, name \code{resolver.lab.test}, TLS 1.3.}
 \end{subfigure}\hfill
-\begin{subfigure}[b]{0.64\textwidth}\centering
+\begin{subfigure}[t]{0.64\textwidth}\vspace{0pt}\centering
   \includegraphics[width=0.49\linewidth]{cert_wrong_name.png}\hfill
   \includegraphics[width=0.49\linewidth]{cert_expired.png}\\[4pt]
   \includegraphics[width=0.49\linewidth]{cert_self_signed.png}\hfill
@@ -949,6 +959,42 @@ excess load is refused, not queued.
   \item \textbf{Capture the wire.} The packet capture confirmed confidentiality and also found D4, which no unit
   test was looking for. After the fix, the same capture proved it closed.
 \end{itemize}
+
+\subsection{Five things to remember about this project}\label{sec:five}
+\begin{tcolorbox}[breakable, enhanced jigsaw, colback=codebg, colframe=black!35, boxrule=0.4pt, arc=0pt, left=4pt, right=4pt, top=3pt, bottom=3pt]
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+  \item \textbf{Both hops are encrypted, and the transport is TLS over TCP.} Plain DNS on UDP port 53 lets
+  anyone on the path read and forge every lookup. Clients reach the resolver with DNS-over-TLS (TCP 853), and
+  the resolver uses DoT again to reach its upstream, so a query is never in clear text between the client and
+  the server that answers it. TLS needs a reliable, ordered byte stream, which is why it runs over TCP rather
+  than UDP. TLS~1.3 agrees a fresh key per connection with X25519 (forward secrecy) and encrypts with
+  AES-256-GCM. The capture shows no readable DNS message and no queried name on either hop
+  (Listing~\ref{lst:pcap}). The one exception is recursion, which must speak plain DNS to authoritative servers.
+  \item \textbf{Encryption is only useful if you check who is on the other end, and you never fall back.} Before
+  sending a question upstream, \code{TlsClient} requires the certificate to chain to a trusted CA, to match the
+  configured name (or IP) and to be inside its validity dates. If a check fails, the next upstream is tried and
+  then the client gets SERVFAIL. There is never a retry on plain port 53, so an attacker who blocks or
+  intercepts port 853 gains nothing. The impostor, expired, self-signed and wrong-IP probes were all rejected
+  with zero queries sent (Figure~\ref{fig:certs}).
+  \item \textbf{Encryption hides the content but not the size, so messages are padded.} AES-GCM output is exactly
+  as long as its input plus a 17-byte overhead, and a reply's length says a lot about the name. EDNS padding
+  (RFC~7830/8467) rounds every message up to a fixed block: 468~B for replies when the client asks for padding,
+  and 128~B for every query we send upstream. Every name then gives a 487~B reply record and a 147~B upstream
+  query record. Padding is an EDNS option, so on the client hop the client decides; on the upstream hop we are
+  the client, so we always pad. The capture is how we found that this was missing at first (D4).
+  \item \textbf{Every query gets exactly one reply, and failure is fast.} An answer, the 2~s deadline, an
+  overloaded queue, an exception and shutdown can all race to finish the same query. One atomic flag in the
+  \code{Responder} lets exactly one of them reply. Bounded queues, a per-upstream time budget and per-worker
+  circuit breakers turn every failure into a quick SERVFAIL instead of a client left waiting, and the service
+  recovers on its own when the upstream returns. \code{load\_gen} checks the rule under a 100{,}000-query
+  flood with injected failures (Table~\ref{tab:load}).
+  \item \textbf{Untrusted input is rejected as early and as cheaply as possible.} A blocked source is reset
+  before the TLS handshake, the most expensive work a client can cause. Connection caps (1000 in total, 32 per
+  source), a token bucket per client and a strike count turn floods into REFUSED and then a 60~s block. Every
+  read of client bytes is bounds-checked, so a lying length field, a compression loop or a 5-byte header ends
+  in FORMERR or a closed connection, never a crash. The 128 wire-format tests ran clean under AddressSanitizer.
+\end{enumerate}
+\end{tcolorbox}
 
 % =====================================================================
 \section{Deployment and future work}

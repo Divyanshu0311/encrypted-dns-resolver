@@ -123,7 +123,9 @@ namespace backend {
         auto zone_opt = get_zone(name, rclass);
         if (!zone_opt.has_value()) {
             if (fallback) return fallback->resolve(name, type, rclass, recurse);
-            return types::ResolveResult{ .rcode = types::Rcode::Refused };
+            types::ResolveResult result;
+            result.rcode = types::Rcode::Refused;
+            return result;
         }
         const std::vector<types::ResourceRecord>& zone = *zone_opt;
 
@@ -134,7 +136,11 @@ namespace backend {
                 soa = &record;
                 break;
             }
-        if (!soa) return types::ResolveResult{ .rcode = types::Rcode::ServFail };
+        if (!soa) {
+             types::ResolveResult result;
+            result.rcode = types::Rcode::ServFail;
+            return result;
+        }
         const types::DomainName apex = soa->name;
 
         // Delegation: look for a zone cut between the apex (exclusive) and the name (inclusive)

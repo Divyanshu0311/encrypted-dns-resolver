@@ -45,11 +45,16 @@ namespace backend {
 
     types::ResolveResult HostsFileResolver::resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass,
                                                     const bool recurse) {
+                                                        types::ResolveResult result;
         if (rclass == types::RecordClass::IN) {
             std::vector<types::ResourceRecord> answers = types::find_records(records, name, type, rclass);
-            if (!answers.empty()) return types::ResolveResult{ .answer = answers };
+            if (!answers.empty()) {
+                result.answer = answers;
+                return result;
+            }
         }
         if (fallback) return fallback->resolve(name, type, rclass, recurse);
-        return types::ResolveResult{ .rcode = types::Rcode::Refused };
+        result.rcode = types::Rcode::Refused;
+        return result;
     }
 } // namespace backend

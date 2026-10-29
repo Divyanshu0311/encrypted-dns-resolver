@@ -36,6 +36,12 @@ namespace backend {
     types::ResolveResult ForwardingResolver::resolve(const types::DomainName& name, const types::RecordType type, const types::RecordClass rclass,
                                                      const bool recurse) {
         if (auto cached = cache.find_answer(name, type, rclass)) return *cached;
+        if (!recurse) {
+            types::ResolveResult failed;
+            failed.rcode = types::Rcode::Refused;
+            failed.served_by = "recursion not desired";
+            return failed;
+        }
 
         const std::size_t first = preferred->load(std::memory_order_relaxed);
         for (std::size_t attempt = 0; attempt < resolvers.size(); ++attempt) {

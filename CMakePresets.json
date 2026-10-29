@@ -2,19 +2,17 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "local",
-      "displayName": "Local g++-14 debug build",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/local",
+      "name": "debug",
+      "displayName": "Local debug build",
+      "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "g++-14",
         "CMAKE_BUILD_TYPE": "Debug"
       }
     },
     {
       "name": "release",
-      "inherits": "local",
-      "displayName": "Local g++-14 optimised build",
+      "inherits": "debug",
+      "displayName": "Local optimised build",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
@@ -22,7 +20,7 @@
     },
     {
       "name": "asan",
-      "inherits": "local",
+      "inherits": "debug",
       "displayName": "AddressSanitizer + UBSan",
       "binaryDir": "${sourceDir}/build/asan",
       "cacheVariables": {
@@ -32,7 +30,7 @@
     },
     {
       "name": "tsan",
-      "inherits": "local",
+      "inherits": "debug",
       "displayName": "ThreadSanitizer",
       "binaryDir": "${sourceDir}/build/tsan",
       "cacheVariables": {
@@ -43,13 +41,13 @@
     }
   ],
   "buildPresets": [
-    { "name": "local", "configurePreset": "local", "jobs": 8 },
+    { "name": "debug", "configurePreset": "debug", "jobs": 8 },
     { "name": "release", "configurePreset": "release", "jobs": 8 },
     { "name": "asan", "configurePreset": "asan", "jobs": 8 },
     { "name": "tsan", "configurePreset": "tsan", "jobs": 8 }
   ],
   "testPresets": [
-    { "name": "local", "configurePreset": "local", "output": { "outputOnFailure": true } },
+    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
     { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
     {
       "name": "tsan",

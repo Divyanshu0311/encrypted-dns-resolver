@@ -5,9 +5,11 @@
 #include "utils.hpp"
 
 namespace types {
-    DomainName::DomainName(const std::vector<uint8_t>& msg, std::size_t pos) {
+    DomainName::DomainName(const std::vector<uint8_t>& msg, std::size_t pos, std::size_t* next_pos) {
         std::size_t size  = 0;
         std::size_t jumps = 0;
+        std::size_t end_pos;
+        bool jumped = false;
 
         absolute = true;
 
@@ -16,6 +18,7 @@ namespace types {
             uint8_t len = msg[pos];
 
             if (len == 0) {
+                if (!jumped) end_pos = pos;
                 break; // Done
             }
 
@@ -23,6 +26,10 @@ namespace types {
                 // Compression pointer
                 if (pos + 1 >= msg.size()) throw std::runtime_error("DomainName: truncated compression pointer");
                 if (++jumps > 128) throw std::runtime_error("DomainName: too many compression pointers (loop?)");
+                if (!jumped) {
+                    end_pos = pos + 1;
+                    jumped  = true;
+                }
                 pos = (static_cast<std::size_t>(len & 0x3F) << 8) | msg[pos + 1];
                 continue;
             }
@@ -37,6 +44,7 @@ namespace types {
             pos += len + 1;
             size += len + 1;
         }
+        if (next_pos) *next_pos = end_pos + 1;
     }
 
     DomainName::DomainName(const std::string& name) {
@@ -96,8 +104,7 @@ namespace types {
         std::vector<uint8_t> result;
         for (const std::string& label : labels) {
             result.push_back(label.size());
-            // insert() rather than append_range(): append_range needs GCC 15
-            result.insert(result.end(), label.begin(), label.end());
+            result.append_range(label);
         }
         if (absolute) result.push_back(0);
 
@@ -156,7 +163,7 @@ namespace types {
         return std::ranges::ends_with(labels, name.labels, {}, utils::lower, utils::lower);
     }
 
-    DomainName DomainName::parent() const noexcept {
+    DomainName DomainName::parent() const {
         DomainName parent_name(*this);
         if (!parent_name.labels.empty()) parent_name.labels.erase(parent_name.labels.begin());
         return parent_name;

@@ -16,7 +16,7 @@ namespace types {
         bool absolute = true;
         DomainName()  = default;
 
-        DomainName(const std::vector<uint8_t>& msg, std::size_t pos = 0);
+        DomainName(const std::vector<uint8_t>& msg, std::size_t pos = 0, std::size_t* next_pos = nullptr);
 
         DomainName(const std::string& name);
 

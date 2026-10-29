@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <stdexcept>
@@ -106,21 +107,84 @@ TEST(DomainName, RelativeNameHasNoTerminatingZero) {
 
 TEST(DomainName, WireRoundTrip) {
     types::DomainName original("www.example.com.");
-    types::DomainName parsed(wire(original), 0);
+    const std::vector<uint8_t> bytes = wire(original);
+    std::size_t next_pos             = 0;
+    types::DomainName parsed(bytes, 0, &next_pos);
     EXPECT_TRUE(original == parsed);
+    EXPECT_EQ(next_pos, bytes.size());
 }
 
 TEST(DomainName, WireParsingHonorsStartOffset) {
     std::vector<uint8_t> msg = { 0xAA, 0xBB, 3, 'c', 'o', 'm', 0 };
-    types::DomainName d(msg, 2);
+    std::size_t next_pos = 0;
+    types::DomainName d(msg, 2, &next_pos);
     EXPECT_EQ(str(d), "com.");
+    EXPECT_EQ(next_pos, 7u); // just past the terminating zero
 }
 
 TEST(DomainName, FollowsCompressionPointer) {
     // offset 0: "com."   offset 5: "www" + pointer to offset 0
     std::vector<uint8_t> msg = { 3, 'c', 'o', 'm', 0, 3, 'w', 'w', 'w', 0xC0, 0x00 };
-    types::DomainName d(msg, 5);
+    std::size_t next_pos = 0;
+    types::DomainName d(msg, 5, &next_pos);
     EXPECT_EQ(str(d), "www.com.");
+    EXPECT_EQ(next_pos, 11u); // just past the pointer, not past the name it points to
+}
+
+TEST(DomainName, NextPosStopsAtEndOfNameNotEndOfMessage) {
+    // "com." followed by two bytes that belong to whatever comes next (e.g. type and class)
+    std::vector<uint8_t> msg = { 3, 'c', 'o', 'm', 0, 0x00, 0x01, 0x00, 0x01 };
+    std::size_t next_pos     = 0;
+    types::DomainName d(msg, 0, &next_pos);
+    EXPECT_EQ(str(d), "com.");
+    EXPECT_EQ(next_pos, 5u);
+}
+
+TEST(DomainName, NextPosForRootName) {
+    std::vector<uint8_t> msg = { 0xAA, 0 };
+    std::size_t next_pos     = 0;
+    types::DomainName d(msg, 1, &next_pos);
+    EXPECT_EQ(str(d), ".");
+    EXPECT_EQ(next_pos, 2u);
+}
+
+TEST(DomainName, NextPosForNameThatIsOnlyAPointer) {
+    // offset 0: "com."   offset 5: pointer to offset 0, then unrelated bytes
+    std::vector<uint8_t> msg = { 3, 'c', 'o', 'm', 0, 0xC0, 0x00, 0xFF, 0xFF };
+    std::size_t next_pos     = 0;
+    types::DomainName d(msg, 5, &next_pos);
+    EXPECT_EQ(str(d), "com.");
+    EXPECT_EQ(next_pos, 7u);
+}
+
+TEST(DomainName, NextPosIsMeasuredAtTheFirstPointerInAChain) {
+    // offset 0: "com."  offset 5: "b" + pointer to 0  offset 8: "a" + pointer to 5
+    std::vector<uint8_t> msg = { 3, 'c', 'o', 'm', 0, 1, 'b', 0xC0, 0x00, 1, 'a', 0xC0, 0x05 };
+    std::size_t next_pos     = 0;
+    types::DomainName d(msg, 9, &next_pos);
+    EXPECT_EQ(str(d), "a.b.com.");
+    EXPECT_EQ(next_pos, 13u);
+}
+
+TEST(DomainName, NextPosIsOptional) {
+    std::vector<uint8_t> msg = { 3, 'c', 'o', 'm', 0 };
+    EXPECT_NO_THROW(types::DomainName(msg, 0, nullptr));
+}
+
+TEST(DomainName, NextPosIsLeftAloneWhenParsingFails) {
+    constexpr std::size_t kSentinel = 12345;
+    const std::vector<std::vector<uint8_t>> bad = {
+        {},                // empty
+        { 3, 'a' },        // truncated label
+        { 0xC0 },          // truncated pointer
+        { 0x40, 0x00 },    // reserved label type
+        { 0xC0, 0x00 },    // pointer loop
+    };
+    for (const auto& msg : bad) {
+        std::size_t next_pos = kSentinel;
+        EXPECT_THROW(types::DomainName(msg, 0, &next_pos), std::runtime_error);
+        EXPECT_EQ(next_pos, kSentinel);
+    }
 }
 
 TEST(DomainName, RejectsMalformedWire) {

@@ -41,10 +41,10 @@
     }
   ],
   "buildPresets": [
-    { "name": "debug", "configurePreset": "debug", "jobs": 8 },
-    { "name": "release", "configurePreset": "release", "jobs": 8 },
-    { "name": "asan", "configurePreset": "asan", "jobs": 8 },
-    { "name": "tsan", "configurePreset": "tsan", "jobs": 8 }
+    { "name": "debug", "configurePreset": "debug", "jobs": 0 },
+    { "name": "release", "configurePreset": "release", "jobs": 0 },
+    { "name": "asan", "configurePreset": "asan", "jobs": 0 },
+    { "name": "tsan", "configurePreset": "tsan", "jobs": 0 }
   ],
   "testPresets": [
     { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },

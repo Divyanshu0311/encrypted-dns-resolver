@@ -26,6 +26,8 @@
 \usepackage[hidelinks]{hyperref}
 
 \graphicspath{{img/}}
+% tighter gaps between sections in the contents so they fit on one page
+\makeatletter\patchcmd{\l@section}{\addvspace{1.0em \@plus\p@}}{\addvspace{0.2em}}{}{\PackageWarning{report}{TOC patch failed}}\makeatother
 \emergencystretch=2em
 \setlist{itemsep=1pt,topsep=3pt,parsep=0pt}
 \setlength{\parskip}{3pt}
@@ -50,12 +52,13 @@
 \begin{center}
   {\LARGE\bfseries Encrypted DNS Resolver}\\[4pt]
   {\large Project Stage II: Final Report}\\[8pt]
-  Dhruv \qquad Divyanshu Gupta \qquad Arnav Bhate\\[3pt]
+  Dhruv Savot (24B4238) \qquad Divyanshu Gupta (23B0306) \qquad Arnav Bhate (23B3947)\\[3pt]
   29 October 2026
 \end{center}
 
-\tableofcontents
-\vspace{-4pt}
+\vspace*{-6ex}
+{\small\tableofcontents}
+\clearpage
 
 % =====================================================================
 \section{Abstract}
@@ -518,6 +521,9 @@ then front end (2~s grace for answers to go out), then middleware (drain, then S
   private CA (\code{CN=resolver.lab.test}), and the main server trusts that CA via \code{upstream\_ca\_file}. The
   code path is identical to Cloudflare's; only the trust anchor differs. A third instance presents an
   \emph{expired} certificate from the same CA. The unreachable public resolvers became live timeout tests.
+  \item \textbf{Public resolvers.} The same machine and release build on an unfiltered network (a phone
+  hotspot) ran \code{config/demo.conf} unchanged: Cloudflare and Google over DoT, checked against the system CA
+  store (Listing~\ref{lst:public}).
   \item \textbf{Capture.} \code{dumpcap} inside an unprivileged network namespace (\code{unshare -rn}) recorded
   both hops on an isolated loopback. In the namespace, the lab upstream answers from its own records file.
 \end{itemize}
@@ -579,7 +585,7 @@ throw-away test CA with any names, IPs and dates. Each rejection test also asser
 \subsection{Test cases: expected versus actual}
 {\small
 \begin{longtable}{@{}P{0.8cm}P{4.4cm}P{3.9cm}P{4.5cm}P{0.9cm}@{}}
-\caption{Key test cases (U = unit/integration test, L = live run on the lab topology). Evidence in the figures
+\caption{Key test cases (U = unit/integration test, L = live run on the lab topology or, where stated, a phone hotspot). Evidence in the figures
 and listings below.}\label{tab:cases}\\
 \toprule
 Type & Case & Expected & Actual & Result \\
@@ -622,6 +628,7 @@ U & SilentServerTimesOut (DoT) & SERVFAIL within deadline & SERVFAIL & \passed \
 U & \textsf{Plain\allowbreak Dns\allowbreak Server\allowbreak Is\allowbreak AFailure\allowbreak Not\allowbreak AFallback} & Fails; no plain query sent & 0 plain queries & \passed \\
 U & \textsf{Server\allowbreak Closing\allowbreak AKept\allowbreak Connection\allowbreak Is\allowbreak Not\allowbreak An\allowbreak Error} & Transparent reconnect & NOERROR & \passed \\
 L & Compare: 8 resolvers on the filtered network & Unreachable ones fail in bounded time & 1.5 s / 3.0 s / 5.0 s SERVFAIL; none hangs (Fig.~\ref{fig:compare}) & \passed \\
+L & Public DoT upstreams on a hotspot (Cloudflare, Google, Quad9; system CA store) & Trusted; answers over TLS; wrong name rejected & NOERROR over TLS; \code{1.1.1.1\#dns.google} rejected, hostname mismatch (Lst.~\ref{lst:public}) & \passed \\
 \multicolumn{5}{@{}l}{\textit{Adversarial client input (Lst.~\ref{lst:neg})}}\\
 L & QDCOUNT=2; label past end; compression loop; space in label & FORMERR & FORMERR & \passed \\
 L & Header shorter than 12 bytes; QR=1; zero-length frame & Close, no reply & Closed & \passed \\
@@ -652,20 +659,18 @@ example.com.            66      IN      A       104.20.23.154
 
 \begin{figure}[H]
 \centering
-\begin{subfigure}[t]{0.32\textwidth}\vspace{0pt}\centering
-  \includegraphics[width=\linewidth]{lookup_tls_cold.png}
-  \caption{First lookup: miss, served by the DoT upstream.}
-\end{subfigure}\hfill
-\begin{subfigure}[t]{0.32\textwidth}\vspace{0pt}\centering
-  \includegraphics[width=\linewidth]{lookup_tls_cached.png}
-  \caption{Second lookup: cache hit, 0.09 ms.}
-\end{subfigure}\hfill
-\begin{subfigure}[t]{0.32\textwidth}\vspace{0pt}\centering
+% \subcaptionbox bottom-aligns the images and top-aligns the captions,
+% so (a), (b) and (c) start on the same line despite different heights.
+\subcaptionbox{First lookup: miss, served by the DoT upstream.}[0.32\textwidth]{%
+  \includegraphics[width=0.32\textwidth]{lookup_tls_cold.png}}\hfill
+\subcaptionbox{Second lookup: cache hit, 0.09 ms.}[0.32\textwidth]{%
+  \includegraphics[width=0.32\textwidth]{lookup_tls_cached.png}}\hfill
+\subcaptionbox{Local record, blocked domain (REFUSED) and NXDOMAIN.}[0.32\textwidth]{%
+  \begin{minipage}[b]{0.32\textwidth}
   \includegraphics[width=\linewidth]{lookup_local.png}\\[3pt]
   \includegraphics[width=\linewidth]{lookup_blocked.png}\\[3pt]
   \includegraphics[width=\linewidth]{lookup_nx.png}
-  \caption{Local record, blocked domain (REFUSED) and NXDOMAIN.}
-\end{subfigure}
+  \end{minipage}}
 \caption{Dashboard Lookup test. ``This server'' sends the query through the whole middleware, like a DoT
 client. ``Served by'' names the hop that answered: \code{upstream 127.0.0.1:9853 (resolver.lab.test) over TLS}.}
 \label{fig:lookup}
@@ -749,6 +754,21 @@ $ openssl s_client -connect 127.0.0.1:9854 -CAfile ca.pem -verify_hostname resol
 verify error:num=10:certificate has expired   notAfter=Feb  1 00:00:00 2025 GMT
 \end{lstlisting}
 
+\needspace{14\baselineskip}
+On an unfiltered network the public resolvers go through the same code, trusted via the system CA store:
+\begin{lstlisting}[caption={Public DoT upstreams on a phone hotspot (\code{config/demo.conf}, system CA store)},label={lst:public}]
+$ dig +tls @127.0.0.1 -p 8853 example.com A     status: NOERROR  Query time: 156 msec
+$ dig +tls @127.0.0.1 -p 8853 github.com A      status: NOERROR  Query time: 21 msec
+$ dig +tls @127.0.0.1 -p 8853 github.com A      status: NOERROR  Query time: 1 msec   (cache)
+  served by: upstream 1.1.1.1:853 (cloudflare-dns.com) over TLS
+  upstream TLS: 1 handshake, 2 reused, 0 rejected; issuer CN=SSL.com SSL Intermediate CA ECC R2
+Certificates test       1.1.1.1#cloudflare-dns.com  -> Trusted, TLSv1.3
+                        8.8.8.8#dns.google          -> Trusted, TLSv1.3
+                        9.9.9.9#dns.quad9.net       -> Trusted, TLSv1.3
+                        1.1.1.1#dns.google          -> certificate rejected: hostname mismatch
+Lookup (direct)         Cloudflare, Google, Quad9 over TLS -> NOERROR, "over TLS"
+\end{lstlisting}
+
 \subsection{Evidence: invalid responses, upstream failure, timeouts and recovery}
 \begin{lstlisting}[caption={Failure and recovery seen by a real DoT client (\code{dig +tls}, one try each)},label={lst:fail}]
 ## 1. Normal: configured DoT upstream (resolver.lab.test)
@@ -768,28 +788,32 @@ www.rust-lang.org    status: NOERROR   Query time: 74 msec
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\textwidth]{live_queries.png}
+\includegraphics[width=\textwidth]{live_queries_narrow.png}
 \caption{Live query log for Listing~\ref{lst:fail}, newest first: success over TLS, SERVFAIL ``no upstream
-answered'' at the 1000~ms upstream budget, fast SERVFAIL while the upstream is down, and recovery.}
+answered'' at the 1000~ms upstream budget, fast SERVFAIL while the upstream is down, and recovery. The Client
+(always 127.0.0.1 over DoT) and Type (always A) columns are cropped out.}
 \label{fig:log}
 \end{figure}
 
 \begin{figure}[H]
 \centering
-\begin{minipage}[t]{0.34\textwidth}\vspace{0pt}\centering
-  \includegraphics[width=\linewidth]{compare.png}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.62\textwidth}\vspace{0pt}
-\captionof{figure}{Compare test on the filtered network. Only the lab DoT upstream and 8.8.8.8 answer. Every
-unreachable resolver fails with SERVFAIL in bounded time: plain upstreams 1.5~s, DoT upstreams 3.0~s,
-recursion 5.0~s after asking 13 servers within its budget. These are direct calls that bypass the middleware.
-Through the middleware the 2~s deadline (or the 1~s per-upstream budget) applies, as Listing~\ref{lst:fail}
-shows.}\label{fig:compare}
-\vspace{6pt}
-\includegraphics[width=0.75\linewidth]{lookup_unreachable_tls.png}
-\captionof{figure}{Lookup through Cloudflare over TLS: SERVFAIL ``no upstream answered''. It never falls back
-to plain DNS.}
-\end{minipage}
+% one 8-row screenshot split into two halves, header repeated, so it can be shown at a readable size
+\includegraphics[width=0.48\textwidth]{compare_1.png}\hfill
+\includegraphics[width=0.48\textwidth]{compare_2.png}
+\caption{Compare test on the filtered campus network (rows 1--4 left, 5--8 right). Only the lab DoT upstream
+and 8.8.8.8 answer. Every unreachable resolver fails with SERVFAIL in bounded time: plain upstreams 1.5~s, DoT
+upstreams 3.0~s, recursion 5.0~s after asking 13 servers within its budget. These are direct calls that bypass
+the middleware. Through the middleware the 2~s deadline (or the 1~s per-upstream budget) applies, as
+Listing~\ref{lst:fail} shows.}
+\label{fig:compare}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{lookup_unreachable_tls.png}
+\caption{Lookup through Cloudflare over TLS on the filtered network: SERVFAIL ``no upstream answered''. It
+never falls back to plain DNS.}
+\label{fig:unreachable}
 \end{figure}
 
 \begin{lstlisting}[caption={Hand-made malformed and unsupported DoT messages (Python \code{ssl} client)},label={lst:neg}]
@@ -886,8 +910,9 @@ S7 & Admin bound to 127.0.0.1; Host header checked (AdminServerTest). & Met \\
 
 \textbf{What the evaluation does not show.}
 \begin{itemize}
-  \item The public-resolver path (Cloudflare, Google) could not be exercised live on this network. It uses the
-  same \code{TlsClient} with the system CA store; the only difference from the lab path is the trust anchor.
+  \item The public-resolver path (Cloudflare, Google, Quad9) was exercised live only on a phone hotspot
+  (Listing~\ref{lst:public}), not on the campus network, and not under the Traffic or Load tests: every unique
+  name there would be a real query to a public resolver.
   \item Padding hides the reply's size, not its timing, nor the number of queries per page load.
   \item SNI on the upstream hop names the resolver being used, not the query.
 \end{itemize}
@@ -955,7 +980,8 @@ excess load is refused, not queued.
   \item \textbf{Fail closed, fail fast.} A SERVFAIL in 1 ms beats a hung client. Bounded queues, deadlines and
   breakers turned every failure we injected into a quick, honest answer.
   \item \textbf{Test the network you will demo on.} The campus network blocks port 853 entirely. A local CA and
-  a second instance let us test the real code path, and the unreachable resolvers turned into timeout tests.
+  a second instance let us test the real code path, the unreachable resolvers turned into timeout tests, and
+  a phone hotspot confirmed the public resolvers work with the configuration unchanged.
   \item \textbf{Capture the wire.} The packet capture confirmed confidentiality and also found D4, which no unit
   test was looking for. After the fix, the same capture proved it closed.
 \end{itemize}

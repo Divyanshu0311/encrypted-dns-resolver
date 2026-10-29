@@ -408,3 +408,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# local test runner and its logs (run_all_tests.sh -> test-logs/)
+run_all_tests.sh
+test-logs/

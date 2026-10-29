@@ -50,7 +50,7 @@ resolvers existed, and the front end against a fake middleware.
  │  accept ─► source blocked? ─► TCP reset (no TLS work)                                      │
  │  TLS 1.3 handshake (OpenSSL) ─► DotFramer: 2-byte length prefix ─► parse_query()           │
  │        │ malformed → FORMERR / NOTIMP / BADVERS          (+ protocol strike)               │
- │        │ blocked domain (Admission) → REFUSED                                              │
+ │        │ blocked domain (Admission) → NXDOMAIN                                             │
  │        ▼                                                                                   │
  │  Middleware::submit(name, type, client, callback)                                          │
  │        ▲                                                                                   │
@@ -120,7 +120,7 @@ separates the two, so a slow upstream can never stall the socket loop.
 4. **Parse and validate.** `parse_query()` checks the header, section counts, name syntax, type, class and
    EDNS. A broken query gets FORMERR (plus a strike), an unsupported one NOTIMP, and EDNS version > 0 gets
    BADVERS.
-5. **Policy.** `Admission` answers REFUSED for names on the blocked-domains list, and for anything under them.
+5. **Policy.** `Admission` answers NXDOMAIN for names on the blocked-domains list, and for anything under them.
 6. **Submit.** The front end calls `Middleware::submit()` with a callback that encodes the answer.
 7. **Admit.** The middleware checks the block list and the client's token bucket. Over the rate means
    REFUSED plus a *rate-limit strike*, and enough strikes in a window blocks the source.
@@ -210,7 +210,7 @@ unit tested on their own.
 | Choice | Why |
 |---|---|
 | **Blocked sources reset at `accept()`, before TLS** | The handshake is the most expensive thing a client can make us do: asymmetric crypto plus several round trips. A blocked client should cost a `close()`. They are checked again before each query, in case the block started mid-connection. |
-| **Blocked domains answered REFUSED, no strike** (`Admission`) | Asking for an ad domain isn't abuse. The client gets a clear "not allowed" and keeps its connection. A listed name also covers every name under it, checked by walking parents up to the root, so `doubleclick.net` blocks `ad.doubleclick.net`. |
+| **Blocked domains answered NXDOMAIN, no strike** (`Admission`) | Asking for an ad domain isn't abuse. The name looks nonexistent, so the client doesn't retry at another resolver (REFUSED would make it), and it keeps its connection. A listed name also covers every name under it, checked by walking parents up to the root, so `doubleclick.net` blocks `ad.doubleclick.net`. |
 | **Protocol strikes for real protocol abuse only** | Not TLS, an old TLS version, a zero-length or ID-less message, a response instead of a query, FORMERR. A client that just disconnects, rejects our certificate, or asks for an unsupported type gets **no** strike, because port scanners, health checks and old clients do these innocently. |
 | **Per-connection limits** | Up to 100 queries pending per connection (above that, reading pauses until answers go out, which is back-pressure rather than dropping), 256 KiB of unsent answers (a client that never reads is closed), and an idle timeout that also covers a half-finished handshake or message. Only *whole* messages count as activity, so trickling one byte at a time ("slowloris") can't hold a connection open. |
 | **Connection limits** (1000 total, 32 per source) | One host can't take every slot. IPv6 is counted per /64, because one device usually owns a whole /64 and per-address counting would let it rotate addresses for free. |
@@ -676,7 +676,7 @@ The dashboard's worker panels and breaker timeline pick up the new count automat
 | `upstreams` | tls://1.1.1.1#cloudflare-dns.com, tls://8.8.8.8#dns.google | — | Upstream resolvers for forwarding mode. `IP[:port]` is plain DNS; `tls://IP[:port][#name]` is DNS-over-TLS (port 853), the certificate checked against the name (or the IP) | — |
 | `upstream_ca_file` | — | system CAs | PEM file of CAs that `tls://` upstreams' certificates must chain to | your upstream uses a private CA |
 | `records_file` | config/demo.hosts | none | Local names answered first (hosts file, or a `.zone` file) | — |
-| `blocked_domains_file` | config/blocked_domains.txt | none | Domains (and everything under them) answered REFUSED | — |
+| `blocked_domains_file` | config/blocked_domains.txt | none | Domains (and everything under them) answered NXDOMAIN | — |
 | `listen` | 127.0.0.1:8853 | 0.0.0.0:853 | DoT address. Port 853 needs root | — |
 | `tls_cert` / `tls_key` | config/server.pem / .key | — | Certificate chain and private key (both required) | — |
 | `max_connections` / `max_connections_per_source` | — | 1000 / 32 | Connection limits | many clients share one NAT address |
@@ -784,7 +784,7 @@ Real encrypted queries show up in the feed too:
 ```sh
 dig +tls @127.0.0.1 -p 8853 www.wikipedia.org     # BIND 9.18+
 dig +tls @127.0.0.1 -p 8853 nas.lan               # from config/demo.hosts
-dig +tls @127.0.0.1 -p 8853 ad.doubleclick.net    # REFUSED, from config/blocked_domains.txt
+dig +tls @127.0.0.1 -p 8853 ad.doubleclick.net    # NXDOMAIN, from config/blocked_domains.txt
 ```
 
 Some networks (campus, corporate) only let DNS through to a few resolvers and drop queries without the

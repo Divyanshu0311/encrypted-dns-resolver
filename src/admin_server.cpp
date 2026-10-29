@@ -892,7 +892,7 @@ struct AdminServer::Impl : std::enable_shared_from_this<Impl> {
   Response through_middleware(const std::string& name, RecordType type) {
     if (admission.refuses(types::DnsQuery{0, true, name, type, false, false})) {
       middleware.record_domain_refusal(name, type, ClientInfo{"127.0.0.1", 0, Transport::Tcp});
-      return json_response(result_json(name, type, server_label(), error_result(Rcode::Refused, "blocked domain"), 0));
+      return json_response(result_json(name, type, server_label(), Admission::blocked_result(), 0));
     }
 
     auto promise = std::make_shared<std::promise<ResolveResult>>();

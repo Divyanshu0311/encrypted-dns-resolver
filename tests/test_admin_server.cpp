@@ -119,9 +119,9 @@ TEST_F(AdminServerTest, LookupGoesThroughTheMiddleware) {
   EXPECT_TRUE(contains(log.body, "\"name\":\"www.example.com\"")) << log.body;
 }
 
-TEST_F(AdminServerTest, BlockedDomainIsRefused) {
+TEST_F(AdminServerTest, BlockedDomainIsNxDomain) {
   auto r = http(port, "GET", "/api/lookup?name=tracker.ads.example&via=server");
-  EXPECT_TRUE(contains(r.body, "\"rcode\":\"REFUSED\"")) << r.body;
+  EXPECT_TRUE(contains(r.body, "\"rcode\":\"NXDOMAIN\"")) << r.body;
   EXPECT_TRUE(contains(r.body, "blocked domain")) << r.body;
 }
 

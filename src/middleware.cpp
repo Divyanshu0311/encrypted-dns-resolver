@@ -7,6 +7,7 @@
 #include<thread>
 #include<utility>
 
+#include "mw/admission.hpp"
 #include "mw/logger.hpp"
 
 namespace mw {
@@ -240,9 +241,9 @@ void Middleware::log_replies(std::string_view name, RecordType type, const Clien
 
 void Middleware::record_domain_refusal(std::string_view name, RecordType type, const ClientInfo& client) noexcept {
   metrics_.on_domain_refused();
-  metrics_.record_reply(Rcode::Refused, Ms{0});
+  const auto result = Admission::blocked_result();
+  metrics_.record_reply(result.rcode, Ms{0});
   try {
-    const auto result = error_result(Rcode::Refused, "blocked domain");
     QueryLogEntry e;
     e.when = std::chrono::system_clock::now();
     e.client = client.address;

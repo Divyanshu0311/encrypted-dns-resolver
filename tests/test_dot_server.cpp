@@ -326,15 +326,15 @@ TEST(DotServer, ZeroLengthFrameClosesTheConnection) {
     EXPECT_SHOW_EQ_AS("closed", client.receive().has_value(), false);
 }
 
-TEST(DotServer, BlockedDomainIsRefusedAndTheConnectionStays) {
+TEST(DotServer, BlockedDomainIsNxDomainAndTheConnectionStays) {
     Harness h(middleware_config(), server_options(), "ads.example\n");
     DotClient client(h.port());
     ASSERT_TRUE(client.handshake_ok());
     ASSERT_TRUE(client.send(query(0x5555, "x.ads.example")));
-    const auto refused = client.receive();
-    ASSERT_TRUE(refused.has_value());
-    EXPECT_SHOW_EQ(rcode_of(*refused), 5);
-    EXPECT_SHOW_EQ_AS("question echoed", get16(*refused, 4), 1);
+    const auto blocked = client.receive();
+    ASSERT_TRUE(blocked.has_value());
+    EXPECT_SHOW_EQ(rcode_of(*blocked), 3);
+    EXPECT_SHOW_EQ_AS("question echoed", get16(*blocked, 4), 1);
     EXPECT_SHOW_EQ_AS("resolver never asked", h.state->calls.load(), 0);
 
     ASSERT_TRUE(client.send(query(0x5556, "example.com")));

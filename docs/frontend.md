@@ -26,7 +26,7 @@ decrypt ─► separate the stream into individual messages
    │
    ├─ client blocked since connecting? ────────► connection reset
    ├─ malformed or unsupported query? ─────────► FORMERR / NOTIMP / BADVERS reply
-   ├─ query asks for a blocked domain? ────────► REFUSED reply
+   ├─ query asks for a blocked domain? ────────► NXDOMAIN reply
    ▼
 hand the query to the middleware ──► middleware resolves it
                                             │
@@ -53,7 +53,7 @@ as each one is ready, matched to its query by ID.
 | Message framing | Splits the decrypted byte stream into individual queries, and prefixes each reply with its length | ✅ Done |
 | TLS encryption | Encrypts every connection with OpenSSL, TLS 1.3 only; proves the server's identity with its certificate | ✅ Done |
 | Abuse blocking | Counts misbehaviour per client; a client that misbehaves too often is cut off before any TLS work, for a set time | ✅ Done |
-| Policy rejections | Answers REFUSED for queries about blocked domains, read from a file | ✅ Done |
+| Policy rejections | Answers NXDOMAIN for queries about blocked domains, read from a file | ✅ Done |
 | Connection handling | Serves many clients at once, several queries per connection, with timeouts and limits | ✅ Done |
 | Configuration | Listen address, certificate and key, limits, blocking settings, blocked-domain list | ✅ Done |
 | Runnable server | `dns_server <config-file>`, tested end to end with `dig +tls` | ✅ Done |
@@ -69,7 +69,7 @@ as each one is ready, matched to its query by ID.
 | Malformed query | FORMERR | Tells a buggy client what's wrong |
 | Query kind we don't support | NOTIMP | Clear answer instead of silence |
 | EDNS version we don't support | BADVERS | Tells the client to retry with version 0, so it keeps EDNS and padding |
-| Query asks for a blocked domain | REFUSED, connection stays open | Clear answer; the client isn't punished |
+| Query asks for a blocked domain | NXDOMAIN, connection stays open | The name looks nonexistent, so the client doesn't try another resolver; the client isn't punished |
 | Middleware is overloaded or the client is over its rate limit | SERVFAIL / REFUSED | The client can retry later |
 
 ### What the response codes mean
@@ -82,7 +82,8 @@ with the query; SERVFAIL says the problem is on the resolver's side.
 | **FORMERR** (1) | Format error: the query is broken | The query was readable enough to reply to, but breaks DNS rules: wrong section counts, a damaged name or one with characters outside letters, digits, `-` and `_`, a bad EDNS record, or extra bytes at the end | No, the client must fix its query |
 | **NOTIMP** (4) | Not implemented: valid, but unsupported | An operation other than a standard query, a class other than Internet (e.g. CHAOS), or a record type outside A, NS, CNAME, SOA, PTR, MX, TXT, AAAA and ANY (e.g. HTTPS) | No |
 | **BADVERS** (16) | Bad EDNS version | The client used an EDNS version above 0, the only one that exists; the reply says "use version 0" | Yes, with version 0 (clients do this automatically) |
-| **REFUSED** (5) | Refused: understood, but not allowed | The domain is on the blocked list, or the client is over the middleware's rate limit | No |
+| **NXDOMAIN** (3) | Name error: the name does not exist | The upstream says so, or the domain is on the blocked list | No |
+| **REFUSED** (5) | Refused: understood, but not allowed | The client is over the middleware's rate limit, or blocked | No |
 | **SERVFAIL** (2) | Server failure: no answer could be produced | The query was fine, but the middleware was overloaded, the upstream servers failed, or the answer couldn't be turned into a valid reply | Yes, later or through another resolver |
 
 ---
@@ -161,7 +162,7 @@ These keys go in the same config file as the middleware's (see `config/middlewar
 | `max_connections` | 1000 | Connections at once |
 | `max_connections_per_source` | 32 | Connections from one IPv4 address or IPv6 /64; 0 means no limit |
 | `idle_timeout_ms` | 10000 | Idle time before a connection is closed, and how long answers may sit unread |
-| `blocked_domains_file` | none | One domain per line, `#` comments allowed. A domain also blocks everything under it, so a lone `.` refuses every query |
+| `blocked_domains_file` | none | One domain per line, `#` comments allowed. A domain also blocks everything under it, so a lone `.` blocks every query |
 | `block_rate_limit_strikes` | 0 (off) | Rate-limit strikes before a block |
 | `block_protocol_strikes` | 0 (off) | Protocol strikes before a block; must be higher than the rate-limit one |
 | `block_window_ms` | 10000 | How long a strike is remembered |

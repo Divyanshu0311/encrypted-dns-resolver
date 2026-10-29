@@ -496,7 +496,7 @@ namespace mw {
 
         if (admission.refuses(*parsed)) {
             middleware.record_domain_refusal(parsed->name, parsed->type, ClientInfo{ c.peer.address, c.peer.port, Transport::Dot });
-            queue_reply(c, types::encode_response(*parsed, error_result(Rcode::Refused, "blocked domain")), now);
+            queue_reply(c, types::encode_response(*parsed, Admission::blocked_result()), now);
             return;
         }
 

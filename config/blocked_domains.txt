@@ -1,4 +1,4 @@
-# Answered REFUSED, along with every name under them
+# Answered NXDOMAIN, along with every name under them
 doubleclick.net
 googlesyndication.com
 ads.example.com

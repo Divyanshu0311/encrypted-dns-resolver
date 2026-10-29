@@ -48,17 +48,20 @@ TEST(ForwardingResolver, AnswersAndCaches) {
     EXPECT_EQ(upstream.udp_queries(), 1);
 }
 
-TEST(ForwardingResolver, SetsRecursionDesiredFromTheCaller) {
-    std::atomic<int> with_rd{ 0 };
-    FakeDnsServer upstream([&](const types::DnsQuery& q, bool) {
-        if (q.recursion_desired) with_rd++;
-        return FakeDnsServer::reply(q, support::result(Rcode::NoError));
-    });
+TEST(ForwardingResolver, WithoutRecursionAnswersOnlyFromTheCache) {
+    FakeDnsServer upstream(answers_a());
     backend::Cache cache;
     backend::ForwardingResolver resolver({ endpoint(upstream) }, cache, 500ms);
-    resolver.resolve(DomainName("a.example."), RecordType::A, RecordClass::IN, true);
-    resolver.resolve(DomainName("b.example."), RecordType::A, RecordClass::IN, false);
-    EXPECT_EQ(with_rd.load(), 1);
+
+    const auto missing = resolver.resolve(DomainName("www.example.com."), RecordType::A, RecordClass::IN, false);
+    EXPECT_EQ(missing.rcode, Rcode::Refused);
+    EXPECT_EQ(upstream.udp_queries(), 0);
+
+    ask(resolver, "www.example.com.");
+    const auto cached = resolver.resolve(DomainName("www.example.com."), RecordType::A, RecordClass::IN, false);
+    EXPECT_EQ(cached.rcode, Rcode::NoError);
+    EXPECT_EQ(cached.served_by, "cache");
+    EXPECT_EQ(upstream.udp_queries(), 1);
 }
 
 TEST(ForwardingResolver, MovesOnFromADeadUpstream) {

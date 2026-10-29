@@ -11,7 +11,7 @@
 
 namespace mw {
 
-    // policy checks on a parsed query before it reaches the middleware. a hit is answered REFUSED;
+    // policy checks on a parsed query before it reaches the middleware. a hit is answered NXDOMAIN;
     // the connection stays open and the source gets no strike
     class Admission {
     public:
@@ -26,6 +26,10 @@ namespace mw {
 
         bool refuses(const types::DnsQuery& query) const;
         std::size_t blocked_count() const noexcept { return blocked_.size(); }
+
+        // the answer to a blocked name: NXDOMAIN, as DNS blocklists usually give. REFUSED would make a
+        // stub resolver try its next nameserver, which may not block the name
+        static ResolveResult blocked_result() { return error_result(Rcode::NXDomain, "blocked domain"); }
 
     private:
         std::unordered_set<DomainName> blocked_; // absolute names, compared case-insensitively

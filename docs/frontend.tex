@@ -94,7 +94,7 @@ back the encrypted answers. It also decides which clients and queries get reject
 \node[reject, right=of blocked1]  (close1)  {Connection reset};
 \node[reject, right=of blocked2]  (close2)  {Connection reset};
 \node[reject, right=of malformed] (formerr) {FORMERR / NOTIMP\\ / BADVERS reply};
-\node[reject, right=of policy]    (refused) {REFUSED reply};
+\node[reject, right=of policy]    (refused) {NXDOMAIN reply};
 \node[ext,    right=of submit]    (mw)      {Middleware resolves it};
 
 \draw[arr] (connect) -- (blocked1);
@@ -143,7 +143,7 @@ TLS encryption & Encrypts every connection with OpenSSL, TLS 1.3 only; proves th
   with its certificate & \done \\
 Abuse blocking & Counts misbehaviour per client; a client that misbehaves too often is cut off
   before any TLS work, for a set time & \done \\
-Policy rejections & Answers REFUSED for queries about blocked domains, read from a file & \done \\
+Policy rejections & Answers NXDOMAIN for queries about blocked domains, read from a file & \done \\
 Connection handling & Serves many clients at once, several queries per connection, with timeouts
   and limits & \done \\
 Configuration & Listen address, certificate and key, limits, blocking settings, blocked-domain
@@ -167,8 +167,8 @@ Malformed query & FORMERR & Tells a buggy client what's wrong \\
 Query kind we don't support & NOTIMP & A clear answer instead of silence \\
 EDNS version we don't support & BADVERS & The client retries with version 0, keeping EDNS and
   padding \\
-Query asks for a blocked domain & REFUSED, connection stays open & A clear answer; the client
-  isn't punished \\
+Query asks for a blocked domain & NXDOMAIN, connection stays open & The name looks nonexistent,
+  so the client doesn't try another resolver; it isn't punished \\
 Middleware overloaded, or client over its rate limit & SERVFAIL / REFUSED & The client can retry
   later \\
 \bottomrule
@@ -197,9 +197,10 @@ succeed.
 \textbf{BADVERS}\newline{\small\color{muted}Bad EDNS version \textperiodcentered{} code 16} &
   \textbf{Wrong EDNS version.} The client used a version above 0, the only one that exists; the
   reply says ``use version 0'' & \textcolor{good}{Yes}, with v0 \\
+\textbf{NXDOMAIN}\newline{\small\color{muted}Name error \textperiodcentered{} code 3} &
+  \textbf{The name does not exist.} The upstream says so, or the domain is on the blocked list & No \\
 \textbf{REFUSED}\newline{\small\color{muted}Refused \textperiodcentered{} code 5} &
-  \textbf{Understood, but not allowed.} The domain is on the blocked list, or the client is over
-  the middleware's rate limit & No \\
+  \textbf{Understood, but not allowed.} The client is over the middleware's rate limit, or blocked & No \\
 \textbf{SERVFAIL}\newline{\small\color{muted}Server failure \textperiodcentered{} code 2} &
   \textbf{No answer could be produced.} The query was fine, but the middleware was overloaded,
   the upstream servers failed, or the answer couldn't be turned into a valid reply &
